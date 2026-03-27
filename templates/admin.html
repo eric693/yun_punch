@@ -1290,7 +1290,7 @@ async function initDash() {
   renderDashStats(data);
   renderDashTodayDetail(data.today_detail || []);
   renderDashPending(data.pending);
-  renderDashDailyChart(data.daily_attendance || [], data.month);
+  await renderDashDailyChart(data.daily_attendance || [], data.month);
   renderDashTodayPie(data.today_summary);
   renderDashLeavePie(data.leave_distribution || []);
   renderDashOTBar(data.ot_ranking || []);
@@ -1358,17 +1358,26 @@ function renderDashPending(pending) {
 }
 
 // ── 本月每日出勤長條圖 ────────────────────────────────────────
-function renderDashDailyChart(daily, month) {
+async function renderDashDailyChart(daily, month) {
   _destroyChart('daily');
   const ctx = document.getElementById('chart-daily');
   if (!ctx) return;
   const today = new Date().toISOString().slice(0, 10);
   const labels = daily.map(d => d.day + '日');
   const data   = daily.map(d => d.count);
+  // Load holidays for current month into admin cache
+  const dashMonth = (new Date()).toISOString().slice(0,7);
+  if (Object.keys(_adminHolidayMap).filter(k=>k.startsWith(dashMonth)).length === 0) {
+    try {
+      const hr = await fetch(`/api/holidays/public?month=${dashMonth}`);
+      if (hr.ok) { const hd = await hr.json(); Object.assign(_adminHolidayMap, hd); }
+    } catch(e) {}
+  }
   const colors = daily.map(d => {
-    if (d.date === today)    return 'rgba(74,123,218,0.9)';
-    if (d.weekday >= 5)      return 'rgba(200,169,110,0.45)';
-    if (!d.is_past)          return 'rgba(200,200,200,0.3)';
+    if (_adminHolidayMap[d.date]) return 'rgba(214,66,66,0.55)';  // holiday = red
+    if (d.date === today)          return 'rgba(74,123,218,0.9)';
+    if (d.weekday >= 5)            return 'rgba(200,169,110,0.45)';
+    if (!d.is_past)                return 'rgba(200,200,200,0.3)';
     return 'rgba(46,158,107,0.7)';
   });
 
@@ -1390,7 +1399,11 @@ function renderDashDailyChart(daily, month) {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: ctx => `${ctx.parsed.y} 人出勤`
+            label: ctx => {
+              const d = daily[ctx.dataIndex];
+              const hl = _adminHolidayMap[d.date] ? ` (${_adminHolidayMap[d.date]})` : '';
+              return `${ctx.parsed.y} 人出勤${hl}`;
+            }
           }
         }
       },
@@ -2125,6 +2138,7 @@ const SCHED_STATUS_COLOR = { pending:'var(--orange)', approved:'var(--green)', r
 const WEEKDAY_ZH = ['日','一','二','三','四','五','六'];
 let schedReviewId = null, schedReqData = [];
 let shiftTypes = [], shiftAssigns = [], shiftLeaveLookup = {};
+let _adminHolidayMap = {};  // cache: date -> holiday name
 let shiftEditTypeId = null, samSelectedDates = new Set(), samSelectedStaff = new Set();
 
 function initSched() {
@@ -2152,8 +2166,12 @@ function switchSchedTab(tab) {
 // ── 月曆總覽 ─────────────────────────────────────────────────
 async function loadSchedCalendar() {
   const month = document.getElementById('sched-cal-month').value; if (!month) return;
-  const { ok, data } = await api(`/api/schedule/admin/calendar/${month}`, {}, true);
-  if (ok) renderSchedCalendar(data);
+  const [calR, holR] = await Promise.all([
+    api(`/api/schedule/admin/calendar/${month}`, {}, true),
+    api(`/api/holidays/public?month=${month}`, {}, true),
+  ]);
+  if (holR.ok) Object.assign(_adminHolidayMap, holR.data);
+  if (calR.ok) renderSchedCalendar(calR.data);
 }
 function renderSchedCalendar(data) {
   const wrap = document.getElementById('sched-cal-wrap');
@@ -2172,7 +2190,9 @@ function renderSchedCalendar(data) {
     if (isOver) { bg = 'var(--red-light)'; border = '#f5c0c0'; }
     else if (hasPending) { bg = '#fef3e8'; border = '#f5c0a0'; }
     const nameList = d.off_list.length ? `<div style="font-size:9px;color:var(--text);margin-top:3px;line-height:1.5">${d.off_list.map(x=>`<span style="color:${x.status==='approved'?'var(--green)':'var(--orange)'}">${escHtml(x.name)}</span>`).join('<br>')}</div>` : '';
-    html += `<div style="border:1.5px solid ${border};border-radius:8px;padding:6px 5px;background:${bg};min-height:64px"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-family:'DM Mono',monospace;font-size:14px;font-weight:600;color:${wd===0?'var(--red)':wd===6?'var(--accent)':'var(--navy)'}">${d.day}</span>${d.off_count>0?`<span style="font-size:10px;font-weight:700;color:${isOver?'var(--red)':'var(--muted)'}">休${d.off_count}/${maxOff}</span>`:''}</div>${nameList}</div>`;
+    const hlBadgeAdmin = _adminHolidayMap[d.date] ? `<div style="font-size:9px;font-weight:700;color:var(--red);margin-top:2px">${escHtml(_adminHolidayMap[d.date])}</div>` : '';
+    const finalBorder = _adminHolidayMap[d.date] && !isOver ? '#fca5a5' : border;
+    html += `<div style="border:1.5px solid ${finalBorder};border-radius:8px;padding:6px 5px;background:${bg};min-height:64px"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-family:'DM Mono',monospace;font-size:14px;font-weight:600;color:${wd===0?'var(--red)':wd===6?'var(--accent)':'var(--navy)'}">${d.day}</span>${d.off_count>0?`<span style="font-size:10px;font-weight:700;color:${isOver?'var(--red)':'var(--muted)'}">休${d.off_count}/${maxOff}</span>`:''}</div>${hlBadgeAdmin}${nameList}</div>`;
   });
   html += '</div>'; wrap.innerHTML = html;
 }
@@ -2281,14 +2301,24 @@ async function saveSchedConfig() {
 }
 
 // ── 班別排班 ─────────────────────────────────────────────────
+async function _loadAdminHolidays(month) {
+  if (!month) return;
+  try {
+    const { ok, data } = await api(`/api/holidays/public?month=${month}`, {}, true);
+    if (ok) Object.assign(_adminHolidayMap, data);
+  } catch(e) {}
+}
+
 async function loadShiftCalendar() {
   const month = document.getElementById('shift-month').value; if (!month) return;
-  const [typesR, assignsR, staffR, leaveR] = await Promise.all([
+  const [typesR, assignsR, staffR, leaveR, holR] = await Promise.all([
     api('/api/shifts/types', {}, true),
     api(`/api/shifts/assignments?month=${month}`, {}, true),
     api('/api/punch/staff', {}, true),
     api(`/api/schedule/admin/requests?month=${month}&status=approved`, {}, true),
+    api(`/api/holidays/public?month=${month}`, {}, true),
   ]);
+  if (holR.ok) Object.assign(_adminHolidayMap, holR.data);
   shiftTypes   = typesR.ok   ? typesR.data.filter(t => t.active) : [];
   shiftAssigns = assignsR.ok ? assignsR.data : [];
   punchStaffList = staffR.ok ? staffR.data : [];
@@ -2319,7 +2349,8 @@ function renderShiftCalendar(month, staffList, assigns) {
   days.forEach(({d,wd,ds}) => {
     const dt = new Date(y,m-1,d); const past = dt < today;
     const wc = wd===0?'var(--red)':wd===6?'var(--accent)':'#fff';
-    html += `<th style="padding:6px 4px;text-align:center;min-width:68px;background:var(--navy);color:${wc};font-weight:${wd===0||wd===6?'700':'400'};opacity:${past?.6:1}"><div>${d}</div><div style="font-size:10px">${DAYS_SHORT[wd]}</div></th>`;
+    const hlName = _adminHolidayMap[ds] || '';
+    html += `<th style="padding:6px 4px;text-align:center;min-width:68px;background:var(--navy);color:${wc};font-weight:${wd===0||wd===6?'700':'400'};opacity:${past?.6:1}"><div>${d}</div><div style="font-size:10px">${DAYS_SHORT[wd]}</div>${hlName?`<div style="font-size:8px;color:#ffb3b3;line-height:1.2;margin-top:1px">${escHtml(hlName)}</div>`:''}</th>`;
   });
   html += '</tr></thead><tbody>';
   staffList.filter(s => s.active).forEach(staff => {
