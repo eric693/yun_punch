@@ -120,6 +120,15 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 .so-dist{font-size:12px;color:rgba(255,255,255,.6);margin-top:7px}
 .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);padding:11px 20px;border-radius:9px;font-size:13px;font-weight:600;z-index:999;opacity:0;pointer-events:none;transition:opacity .2s;max-width:88vw;text-align:center;white-space:pre-line}
 .toast.show{opacity:1}.toast-ok{background:var(--green);color:#fff}.toast-err{background:var(--red);color:#fff}
+
+.ann-card{border-radius:10px;overflow:hidden;margin-bottom:10px;border:1.5px solid var(--border)}
+.ann-card.pinned{border-color:var(--gold)}
+.ann-card.urgent{border-color:var(--red)}
+.ann-header{padding:10px 14px;display:flex;align-items:flex-start;gap:8px;cursor:pointer}
+.ann-body{padding:10px 14px 14px;font-size:13px;line-height:1.8;color:var(--text);white-space:pre-wrap;border-top:1px solid var(--border);display:none}
+.ann-body.open{display:block}
+.ann-cat{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.ann-unread{width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;margin-top:4px}
 </style>
 </head>
 <body>
@@ -155,7 +164,10 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <button class="logout-btn" onclick="doLogout()">登出</button>
       </div>
       <div class="tab-bar">
-        <button class="tab active" id="tab-punch"         onclick="switchTab('punch')">打卡</button>
+        <button class="tab" id="tab-ann" onclick="switchTab('ann')" style="position:relative">
+          公告<span id="ann-unread-dot" style="display:none;position:absolute;top:8px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red)"></span>
+        </button>
+        <button class="tab active" id="tab-punch" onclick="switchTab('punch')">打卡</button>
         <button class="tab"        id="tab-sched"         onclick="switchTab('sched')">排休申請</button>
         <button class="tab"        id="tab-leave"         onclick="switchTab('leave')">請假申請</button>
         <button class="tab"        id="tab-schedule-view" onclick="switchTab('schedule-view')">我的排班</button>
@@ -291,6 +303,13 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
       </div>
 
 
+
+      <!-- 公告 tab -->
+      <div id="panel-ann" class="tab-body" style="display:none">
+        <div id="ann-staff-list">
+          <div style="text-align:center;color:var(--muted);font-size:13px;padding:20px">載入中...</div>
+        </div>
+      </div>
       <!-- 請假申請 tab -->
       <div id="panel-leave" class="tab-body" style="display:none">
         <div class="month-row" style="margin-bottom:14px">
@@ -410,7 +429,7 @@ async function doLogin(){
     const r=await fetch('/api/punch/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     const d=await r.json();
     if(!r.ok){err.textContent=d.error||'登入失敗';return;}
-    me=d;document.getElementById('inp-pass').value='';showMain();
+    me=d;document.getElementById('inp-pass').value='';showMain();loadAnnStaff();
   }catch(e){err.textContent='網路錯誤，請重試';}
   finally{btn.disabled=false;btn.textContent='登入';}
 }
@@ -428,10 +447,11 @@ function showMain(){
   switchTab('punch');
 }
 function switchTab(tab){
-  ['punch','sched','leave','schedule-view','overtime','attendance','payslip'].forEach(t=>{
+  ['ann','punch','sched','leave','schedule-view','overtime','attendance','payslip'].forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===tab);
     document.getElementById('panel-'+t).style.display=t===tab?'':'none';
   });
+  if(tab==='ann')initAnnStaff();
   if(tab==='punch'){startGPS();loadTodayLog();}
   if(tab==='sched')initSchedTab();
   if(tab==='leave')initLeaveTab();
@@ -789,6 +809,91 @@ async function loadAttendance(){
 function showSuccess(name,type,time,dist){
   ['so-name','so-type','so-time','so-dist'].forEach((id,i)=>{document.getElementById(id).textContent=[name,type+' 成功',time,dist][i];});
   const el=document.getElementById('sov');el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2400);
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// 公告模組（員工端）
+// ══════════════════════════════════════════════════════════════
+const ANN_CAT_COLOR_S = {
+  general:'#4a7bda', hr:'#2e9e6b', event:'#c8a96e',
+  urgent:'#d64242',  policy:'#8b5cf6'
+};
+const ANN_CAT_LABEL_S = {
+  general:'一般公告', hr:'人事公告', event:'活動通知',
+  urgent:'緊急公告', policy:'制度政策'
+};
+const ANN_PRI_ICON = { normal:'', important:'⚠️ ', urgent:'🚨 ' };
+
+let readAnnIds = new Set(
+  JSON.parse(localStorage.getItem('readAnns') || '[]')
+);
+
+async function initAnnStaff() {
+  await loadAnnStaff();
+}
+
+async function loadAnnStaff() {
+  const wrap = document.getElementById('ann-staff-list');
+  try {
+    const res  = await fetch('/api/announcements/public');
+    if (!res.ok) { wrap.innerHTML='<div style="text-align:center;color:var(--muted);padding:20px">無法載入公告</div>'; return; }
+    const list = await res.json();
+    const unread = list.filter(a => !readAnnIds.has(String(a.id))).length;
+    const dot = document.getElementById('ann-unread-dot');
+    if (dot) dot.style.display = unread > 0 ? '' : 'none';
+    if (!list.length) {
+      wrap.innerHTML='<div style="text-align:center;color:var(--muted);padding:32px">目前無公告</div>'; return;
+    }
+    wrap.innerHTML = list.map(a => {
+      const catColor = ANN_CAT_COLOR_S[a.category] || '#4a7bda';
+      const catLabel = ANN_CAT_LABEL_S[a.category] || a.category;
+      const isUnread = !readAnnIds.has(String(a.id));
+      const priIcon  = ANN_PRI_ICON[a.priority] || '';
+      const pubDate  = a.published_at ? a.published_at.slice(0, 10) : '';
+      return `<div class="ann-card ${a.is_pinned?'pinned':''} ${a.priority==='urgent'?'urgent':''}" id="ann-${a.id}">
+        <div class="ann-header" onclick="toggleAnnStaff(${a.id}, this)">
+          ${isUnread ? '<div class="ann-unread"></div>' : '<div style="width:8px;flex-shrink:0"></div>'}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+              ${a.is_pinned ? '<span style="font-size:11px;font-weight:700;color:var(--gold)">📌</span>' : ''}
+              <span class="ann-cat" style="background:${catColor}22;color:${catColor}">${catLabel}</span>
+            </div>
+            <div style="font-size:14px;font-weight:700;color:var(--navy)">${priIcon}${esc(a.title)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(a.author)} · ${pubDate}</div>
+          </div>
+          <div style="font-size:18px;color:var(--muted);flex-shrink:0" id="ann-arrow-${a.id}">›</div>
+        </div>
+        <div class="ann-body" id="ann-body-${a.id}">${esc(a.content)}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    wrap.innerHTML='<div style="text-align:center;color:var(--red);padding:20px">載入失敗</div>';
+  }
+}
+
+function toggleAnnStaff(id, headerEl) {
+  const body  = document.getElementById('ann-body-' + id);
+  const arrow = document.getElementById('ann-arrow-' + id);
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  arrow.textContent = isOpen ? '›' : '⌄';
+  if (!isOpen && !readAnnIds.has(String(id))) {
+    readAnnIds.add(String(id));
+    try { localStorage.setItem('readAnns', JSON.stringify([...readAnnIds])); } catch(e) {}
+    // Remove unread dot on this card
+    const dot = headerEl.querySelector('.ann-unread');
+    if (dot) dot.style.display = 'none';
+    // Check if any unread remain
+    fetch('/api/announcements/public')
+      .then(r=>r.json()).then(list=>{
+        const rem = list.filter(a=>!readAnnIds.has(String(a.id))).length;
+        const navDot = document.getElementById('ann-unread-dot');
+        if (navDot) navDot.style.display = rem>0?'':'none';
+      }).catch(()=>{});
+    // Record view
+    fetch('/api/announcements/'+id+'/view',{method:'POST'}).catch(()=>{});
+  }
 }
 
 // ══════════════════════════════════════════════════════════════

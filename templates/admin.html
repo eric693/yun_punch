@@ -191,6 +191,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-sched"  onclick="showPage('sched',event)">排班管理<span class="nav-badge" id="badge-sched" style="display:none"></span></a>
     <a href="#" class="nav-item"        id="nav-leave"  onclick="showPage('leave',event)">請假管理<span class="nav-badge" id="badge-leave" style="display:none"></span></a>
     <a href="#" class="nav-item"        id="nav-salary" onclick="showPage('salary',event)">薪資管理</a>
+    <a href="#" class="nav-item"        id="nav-ann"    onclick="showPage('ann',event)">公告管理</a>
   </nav>
   <div class="sidebar-bottom">
     <a href="/admin/logout" class="logout-btn">登出系統</a>
@@ -667,6 +668,31 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
   </div><!-- end page-salary -->
 
+  <!-- ── 公告管理 ── -->
+  <div class="page" id="page-ann" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <select class="filter-input" id="ann-filter-cat" onchange="loadAnnList()" style="min-width:120px">
+          <option value="">全部類別</option>
+          <option value="general">一般公告</option>
+          <option value="hr">人事公告</option>
+          <option value="event">活動通知</option>
+          <option value="urgent">緊急公告</option>
+          <option value="policy">制度政策</option>
+        </select>
+        <select class="filter-input" id="ann-filter-status" onchange="loadAnnList()" style="min-width:110px">
+          <option value="">全部狀態</option>
+          <option value="active">上架中</option>
+          <option value="inactive">已下架</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="openAnnModal()">＋ 新增公告</button>
+    </div>
+    <div id="ann-list">
+      <div class="empty-state"><div class="empty-state-text">載入中...</div></div>
+    </div>
+  </div><!-- end page-ann -->
+
 </main>
 
 <!-- Punch Staff Modal -->
@@ -823,6 +849,71 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
   </div>
 </div>
 
+
+<!-- Announcement Modal -->
+<div class="modal-overlay" id="ann-modal" style="display:none">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <span class="modal-title" id="ann-modal-title">新增公告</span>
+      <button class="modal-close" onclick="closeAnnModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ann-id">
+      <div style="margin-bottom:14px">
+        <label class="form-label">標題 *</label>
+        <input class="form-input" id="ann-title" placeholder="公告標題" style="width:100%">
+      </div>
+      <div class="form-row" style="margin-bottom:14px">
+        <div>
+          <label class="form-label">類別</label>
+          <select class="form-input" id="ann-cat" style="width:100%">
+            <option value="general">一般公告</option>
+            <option value="hr">人事公告</option>
+            <option value="event">活動通知</option>
+            <option value="urgent">緊急公告</option>
+            <option value="policy">制度政策</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">優先度</label>
+          <select class="form-input" id="ann-priority" style="width:100%">
+            <option value="normal">一般</option>
+            <option value="important">重要</option>
+            <option value="urgent">緊急</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:14px">
+        <label class="form-label">內容 *</label>
+        <textarea class="form-input" id="ann-content" rows="6"
+          style="width:100%;resize:vertical;min-height:120px;font-family:'Noto Sans TC',sans-serif;font-size:14px;line-height:1.7"
+          placeholder="公告內容…"></textarea>
+      </div>
+      <div class="form-row" style="margin-bottom:14px">
+        <div>
+          <label class="form-label">發布人</label>
+          <input class="form-input" id="ann-author" placeholder="管理員" style="width:100%">
+        </div>
+        <div>
+          <label class="form-label">到期日（留空=永不過期）</label>
+          <input class="form-input" type="datetime-local" id="ann-expires" style="width:100%">
+        </div>
+      </div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="ann-pinned"> 置頂公告
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="ann-active" checked> 立即上架
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeAnnModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveAnn()">發布公告</button>
+    </div>
+  </div>
+</div>
 
 <!-- Leave Admin Modal -->
 <div class="modal-overlay" id="leave-admin-modal" style="display:none">
@@ -998,15 +1089,16 @@ function showPage(page, e) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.getElementById('nav-' + page).classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['punch','sched','leave','salary'].forEach(p =>
+  ['punch','sched','leave','salary','ann'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
   document.getElementById('page-title').textContent =
-    { punch: '打卡管理', sched: '排班管理', leave: '請假管理', salary: '薪資管理' }[page];
+    { punch: '打卡管理', sched: '排班管理', leave: '請假管理', salary: '薪資管理', ann: '公告管理' }[page];
   if (page === 'punch')  initPunch();
   if (page === 'sched')  initSched();
   if (page === 'leave')  initLeave();
   if (page === 'salary') initSalary();
+  if (page === 'ann')    initAnn();
 }
 
 // ── Toast ─────────────────────────────────────────────────────
@@ -2294,9 +2386,9 @@ async function loadSalaryRecords() {
     const sl = r.status==='confirmed'?'已確認':'草稿';
     return `<tr>
       <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(r.employee_code||'')}</td>
-      <td style="font-weight:600">${escHtml(r.staff_name)}</td>
+      <td style="font-weight:600">${escHtml(r.staff_name)}<span style="font-size:10px;color:var(--muted);margin-left:6px">${r.salary_type==='hourly'?'時薪':'月薪'}</span></td>
       <td style="color:var(--muted)">${escHtml(r.department||'')}</td>
-      <td style="font-family:'DM Mono',monospace;color:var(--green)">$${fmtNum(r.allowance_total)}</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--green)">$${fmtNum(r.allowance_total)}<div style="font-size:10px;color:var(--muted)">${r.salary_type==='hourly'?r.actual_work_hours+'h':r.actual_days+'天'}</div></td>
       <td style="font-family:'DM Mono',monospace;color:var(--red)">-$${fmtNum(r.deduction_total)}</td>
       <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--navy)">$${fmtNum(r.net_pay)}</td>
       <td><span style="font-size:12px;font-weight:700;color:${sc}">${sl}</span></td>
@@ -2332,12 +2424,42 @@ async function openSalDetail(id) {
   const items = data.items||[];
   const allowItems = items.filter(it=>it.type==='allowance');
   const deductItems= items.filter(it=>it.type==='deduction');
+  const isHourly = data.salary_type === 'hourly';
+  // 時薪制：工時明細表格
+  let hourlyTable = '';
+  if (isHourly && data.punch_details && data.punch_details.length) {
+    hourlyTable = `<div style="margin-top:10px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:6px">⏱ 打卡工時明細（時薪制）</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr style="background:var(--bg)">
+          <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">日期</th>
+          <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">上班</th>
+          <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">下班</th>
+          <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">休息</th>
+          <th style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">實際工時</th>
+        </tr>
+        ${data.punch_details.map(pd=>`<tr style="border-bottom:1px solid #f0f2f8">
+          <td style="padding:4px 8px;font-family:'DM Mono',monospace">${pd.date}</td>
+          <td style="padding:4px 8px;text-align:center;color:var(--green)">${pd.clock_in}</td>
+          <td style="padding:4px 8px;text-align:center;color:var(--red)">${pd.clock_out}</td>
+          <td style="padding:4px 8px;text-align:center;color:var(--muted)">${pd.break_mins?pd.break_mins+'min':''}</td>
+          <td style="padding:4px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${pd.net_hours}h</td>
+        </tr>`).join('')}
+        <tr style="background:var(--bg);font-weight:700">
+          <td colspan="4" style="padding:6px 8px">合計</td>
+          <td style="padding:6px 8px;text-align:right;font-family:'DM Mono',monospace;color:var(--accent)">${data.actual_work_hours}h</td>
+        </tr>
+      </table>
+    </div>`;
+  }
   const leaveInfo = `<div style="font-size:12px;color:var(--muted);margin-top:4px">
-    出勤 ${data.actual_days} 天 / 工作日 ${data.work_days} 天
+    ${isHourly
+      ? `實際工時 ${data.actual_work_hours}h × 時薪 $${fmtNum(data.hourly_rate)} = $${fmtNum(data.hourly_base_pay)}`
+      : `出勤 ${data.actual_days} 天 / 工作日 ${data.work_days} 天`}
     ${data.leave_days>0?` | 請假 ${data.leave_days} 天`:''}
     ${data.unpaid_days>0?` | 無薪 ${data.unpaid_days} 天`:''}
     ${data.ot_pay>0?` | 加班費 $${fmtNum(data.ot_pay)}`:''}
-  </div>`;
+  </div>${hourlyTable}`;
   let html = `<div style="padding:16px 24px;background:var(--bg);border-bottom:1px solid var(--border)">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
       <div><span style="color:var(--muted)">職員代碼：</span><strong>${escHtml(data.employee_code||'—')}</strong></div>
@@ -2606,6 +2728,161 @@ async function deleteSalaryItem(id) {
   if (!confirm('確定刪除此薪資項目？')) return;
   await api(`/api/salary/items/${id}`,{method:'DELETE'});
   showToast('已刪除','success'); await loadSalaryItems();
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// 公告管理模組
+// ══════════════════════════════════════════════════════════════
+let annList = [];
+
+const ANN_CAT_LABEL = {
+  general:'一般公告', hr:'人事公告', event:'活動通知',
+  urgent:'緊急公告', policy:'制度政策'
+};
+const ANN_CAT_COLOR = {
+  general:'#4a7bda', hr:'#2e9e6b', event:'#c8a96e',
+  urgent:'#d64242',  policy:'#8b5cf6'
+};
+const ANN_PRI_LABEL = { normal:'一般', important:'重要', urgent:'緊急' };
+const ANN_PRI_COLOR = { normal:'var(--muted)', important:'var(--orange)', urgent:'var(--red)' };
+
+function initAnn() {
+  loadAnnList();
+}
+
+async function loadAnnList() {
+  const catFilter    = document.getElementById('ann-filter-cat').value;
+  const statusFilter = document.getElementById('ann-filter-status').value;
+  const { ok, data } = await api('/api/announcements', {}, true);
+  if (!ok) return;
+  let list = data;
+  if (catFilter)    list = list.filter(a => a.category === catFilter);
+  if (statusFilter === 'active')   list = list.filter(a => a.active && (!a.expires_at || new Date(a.expires_at) > new Date()));
+  if (statusFilter === 'inactive') list = list.filter(a => !a.active || (a.expires_at && new Date(a.expires_at) <= new Date()));
+  annList = list;
+  renderAnnList();
+}
+
+function renderAnnList() {
+  const wrap = document.getElementById('ann-list');
+  if (!annList.length) {
+    wrap.innerHTML = '<div class="card" style="padding:48px;text-align:center;color:var(--muted)">尚無公告，點右上角「新增公告」開始發佈</div>';
+    return;
+  }
+  const now = new Date();
+  wrap.innerHTML = annList.map(a => {
+    const catColor  = ANN_CAT_COLOR[a.category] || '#4a7bda';
+    const catLabel  = ANN_CAT_LABEL[a.category] || a.category;
+    const priColor  = ANN_PRI_COLOR[a.priority] || 'var(--muted)';
+    const priLabel  = ANN_PRI_LABEL[a.priority] || a.priority;
+    const isExpired = a.expires_at && new Date(a.expires_at) <= now;
+    const isActive  = a.active && !isExpired;
+    const pubDate   = a.published_at ? a.published_at.slice(0, 16).replace('T', ' ') : '';
+    const expDate   = a.expires_at   ? a.expires_at.slice(0, 10) : '';
+
+    return `<div class="card" style="margin-bottom:12px;opacity:${isActive ? 1 : 0.55}">
+      <div class="card-header" style="flex-wrap:wrap;gap:8px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            ${a.is_pinned ? '<span style="font-size:12px;font-weight:700;color:var(--gold)">📌 置頂</span>' : ''}
+            <span style="padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;background:${catColor}22;color:${catColor}">${catLabel}</span>
+            ${a.priority !== 'normal' ? `<span style="font-size:11px;font-weight:700;color:${priColor}">${priLabel}</span>` : ''}
+            <span style="font-size:11px;color:${isActive ? 'var(--green)' : 'var(--muted)'}">● ${isActive ? '上架中' : isExpired ? '已過期' : '已下架'}</span>
+          </div>
+          <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">${escHtml(a.title)}</div>
+          <div style="font-size:12px;color:var(--muted)">
+            ${escHtml(a.author)} 發布於 ${pubDate}
+            ${expDate ? `　|　到期：${expDate}` : ''}
+            　|　閱讀 ${a.view_count || 0} 次
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-ghost btn-sm" onclick="toggleAnnPin(${a.id})" title="${a.is_pinned ? '取消置頂' : '設為置頂'}">
+            ${a.is_pinned ? '📌' : '📍'}
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="openAnnModal(${a.id})">編輯</button>
+          <button class="btn btn-danger btn-sm"  onclick="deleteAnn(${a.id})">刪除</button>
+        </div>
+      </div>
+      <div style="padding:12px 24px 16px;border-top:1px solid var(--border);font-size:13px;color:var(--text);line-height:1.8;white-space:pre-wrap">${escHtml(a.content)}</div>
+    </div>`;
+  }).join('');
+}
+
+function openAnnModal(id = null) {
+  document.getElementById('ann-modal-title').textContent = id ? '編輯公告' : '新增公告';
+  document.getElementById('ann-id').value      = id || '';
+  document.getElementById('ann-expires').value = '';
+  document.getElementById('ann-pinned').checked = false;
+  document.getElementById('ann-active').checked = true;
+
+  if (id) {
+    const a = annList.find(x => x.id === id);
+    if (!a) return;
+    document.getElementById('ann-title').value    = a.title;
+    document.getElementById('ann-content').value  = a.content;
+    document.getElementById('ann-cat').value      = a.category  || 'general';
+    document.getElementById('ann-priority').value = a.priority  || 'normal';
+    document.getElementById('ann-author').value   = a.author    || '管理員';
+    document.getElementById('ann-pinned').checked = a.is_pinned || false;
+    document.getElementById('ann-active').checked = a.active    !== false;
+    if (a.expires_at) {
+      document.getElementById('ann-expires').value = a.expires_at.slice(0, 16);
+    }
+  } else {
+    document.getElementById('ann-title').value    = '';
+    document.getElementById('ann-content').value  = '';
+    document.getElementById('ann-cat').value      = 'general';
+    document.getElementById('ann-priority').value = 'normal';
+    document.getElementById('ann-author').value   = '管理員';
+  }
+  document.getElementById('ann-modal').style.display = 'flex';
+}
+
+function closeAnnModal() {
+  document.getElementById('ann-modal').style.display = 'none';
+}
+
+async function saveAnn() {
+  const id = document.getElementById('ann-id').value;
+  const body = {
+    title:      document.getElementById('ann-title').value.trim(),
+    content:    document.getElementById('ann-content').value.trim(),
+    category:   document.getElementById('ann-cat').value,
+    priority:   document.getElementById('ann-priority').value,
+    author:     document.getElementById('ann-author').value.trim() || '管理員',
+    is_pinned:  document.getElementById('ann-pinned').checked,
+    active:     document.getElementById('ann-active').checked,
+    expires_at: document.getElementById('ann-expires').value || null,
+  };
+  if (!body.title)   { showToast('請填寫公告標題', 'error'); return; }
+  if (!body.content) { showToast('請填寫公告內容', 'error'); return; }
+
+  const url    = id ? `/api/announcements/${id}` : '/api/announcements';
+  const method = id ? 'PUT' : 'POST';
+  const { ok } = await api(url, { method, body: JSON.stringify(body) });
+  if (!ok) return;
+  closeAnnModal();
+  showToast(id ? '公告已更新' : '公告已發布', 'success');
+  await loadAnnList();
+}
+
+async function deleteAnn(id) {
+  const a = annList.find(x => x.id === id);
+  if (!confirm(`確定刪除公告「${a ? a.title : id}」？`)) return;
+  const { ok } = await api(`/api/announcements/${id}`, { method: 'DELETE' });
+  if (!ok) return;
+  showToast('已刪除', 'success');
+  annList = annList.filter(x => x.id !== id);
+  renderAnnList();
+}
+
+async function toggleAnnPin(id) {
+  const { ok, data } = await api(`/api/announcements/${id}/pin`, { method: 'POST', body: '{}' });
+  if (!ok) return;
+  showToast(data.is_pinned ? '已置頂' : '已取消置頂', 'success');
+  await loadAnnList();
 }
 
 // ── Badges ────────────────────────────────────────────────────
