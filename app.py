@@ -3245,6 +3245,7 @@ def init_salary_db():
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )""",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_ids JSONB DEFAULT NULL",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_overrides JSONB DEFAULT NULL",
         """CREATE TABLE IF NOT EXISTS salary_records (
             id              SERIAL PRIMARY KEY,
             staff_id        INT REFERENCES punch_staff(id) ON DELETE CASCADE,
@@ -3481,6 +3482,18 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     items           = []
     allowance_total = 0.0
     deduction_total = 0.0
+    # 員工個人金額覆寫 {str(item_id): amount}
+    _overrides = staff.get('salary_item_overrides') or {}
+    if isinstance(_overrides, str):
+        try: _overrides = _json.loads(_overrides)
+        except Exception: _overrides = {}
+
+    def _apply_override(item_id, calculated_amt):
+        """若員工設有個人金額，使用個人金額；否則使用計算值"""
+        key = str(item_id)
+        if key in _overrides and _overrides[key] is not None and _overrides[key] != '':
+            return float(_overrides[key]), True   # (amount, is_overridden)
+        return calculated_amt, False
 
     if salary_type == 'hourly':
         # 時薪制：第一筆項目是「本薪（工時計算）」
@@ -3531,12 +3544,14 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 ORDER BY sort_order, id
             """).fetchall()
         for it in salary_items_rows:
-            amt = _eval_formula(it['formula'] or '', base_salary or insured_salary,
-                                insured_salary, service_years)
+            calc_amt = _eval_formula(it['formula'] or '', base_salary or insured_salary,
+                                     insured_salary, service_years)
+            amt, overridden = _apply_override(it['id'], calc_amt)
+            note = f'手動設定 ${amt}' if overridden else (it['formula'] or '')
             items.append({
                 'id': it['id'], 'name': it['name'], 'type': 'deduction',
                 'amount': round(amt, 2), 'formula': it['formula'] or '',
-                'calc_note': it['formula'] or '',
+                'calc_note': note,
             })
             deduction_total += amt
 
@@ -3554,17 +3569,19 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 "SELECT * FROM salary_items WHERE active=TRUE ORDER BY sort_order, id"
             ).fetchall()
         for it in items_rows:
-            formula = it['formula'] or ''
-            amt     = float(it['amount'] or 0)
+            formula  = it['formula'] or ''
+            calc_amt = float(it['amount'] or 0)
             if formula:
-                amt = _eval_formula(formula, base_salary, insured_salary, service_years)
+                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years)
+            amt, overridden = _apply_override(it['id'], calc_amt)
+            note = f'手動設定 ${amt}' if overridden else formula
             items.append({
                 'id':        it['id'],
                 'name':      it['name'],
                 'type':      it['item_type'],
                 'amount':    round(amt, 2),
                 'formula':   formula,
-                'calc_note': formula,
+                'calc_note': note,
             })
             if it['item_type'] == 'allowance':
                 allowance_total += amt
@@ -3858,7 +3875,7 @@ def api_salary_staff_list():
             SELECT id, name, username, role, active, employee_code, department,
                    position_title, hire_date, birth_date, base_salary, insured_salary,
                    daily_hours, ot_rate1, ot_rate2, salary_type, hourly_rate,
-                   vacation_quota, salary_notes, salary_item_ids
+                   vacation_quota, salary_notes, salary_item_ids, salary_item_overrides
             FROM punch_staff ORDER BY name
         """).fetchall()
     result = []
@@ -3882,6 +3899,8 @@ def api_salary_staff_update(sid):
     with get_db() as conn:
         salary_item_ids = b.get('salary_item_ids')
         salary_item_ids_json = _json.dumps(salary_item_ids) if salary_item_ids is not None else None
+        overrides = b.get('salary_item_overrides')  # dict {str(item_id): amount}
+        overrides_json = _json.dumps(overrides) if overrides else None
         conn.execute("""
             UPDATE punch_staff SET
               employee_code=%s, department=%s, position_title=%s,
@@ -3889,7 +3908,7 @@ def api_salary_staff_update(sid):
               base_salary=%s, insured_salary=%s, daily_hours=%s,
               ot_rate1=%s, ot_rate2=%s, salary_type=%s,
               hourly_rate=%s, vacation_quota=%s, salary_notes=%s,
-              salary_item_ids=%s
+              salary_item_ids=%s, salary_item_overrides=%s
             WHERE id=%s
         """, (_s('employee_code'), _s('department'), _s('position_title'),
               _s('hire_date'), _s('birth_date'),
@@ -3897,7 +3916,7 @@ def api_salary_staff_update(sid):
               _f('ot_rate1') or 1.33, _f('ot_rate2') or 1.67,
               b.get('salary_type','monthly'),
               _f('hourly_rate'), b.get('vacation_quota') or None,
-              b.get('salary_notes',''), salary_item_ids_json, sid))
+              b.get('salary_notes',''), salary_item_ids_json, overrides_json, sid))
         row = conn.execute("SELECT * FROM punch_staff WHERE id=%s", (sid,)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 

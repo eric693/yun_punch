@@ -1635,8 +1635,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       </div>
       <div id="ssm-annual-info" style="font-size:12px;color:var(--green);margin-top:8px"></div>
       <div style="margin-top:14px">
-        <label class="form-label" style="margin-bottom:6px;display:block">薪資項目 <span style="font-weight:400;color:var(--muted);font-size:12px">（不勾選則使用全部啟用項目）</span></label>
-        <div id="ssm-items-list" style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;min-height:40px"></div>
+        <label class="form-label" style="margin-bottom:6px;display:block">薪資項目
+          <span style="font-weight:400;color:var(--muted);font-size:12px">（勾選啟用；金額欄留空則使用公式/預設金額）</span>
+        </label>
+        <div id="ssm-items-list" style="border:1.5px solid var(--border);border-radius:8px;overflow:hidden"></div>
       </div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeSalStaffModal()">取消</button><button class="btn btn-primary" onclick="saveSalStaff()">儲存</button></div>
@@ -4751,24 +4753,62 @@ function openSalStaffModal(id) {
   const yrs  = s.service_years?s.service_years.toFixed(1):0;
   document.getElementById('ssm-annual-info').textContent =
     days>0 ? `年資 ${yrs} 年 → 特休 ${days} 天/年` : '到職未滿1年，尚無特休';
-  // 渲染薪資項目 checkboxes
+  // 渲染薪資項目（勾選 + 自訂金額）
   const selectedIds = s.salary_item_ids || [];
+  const overrides   = s.salary_item_overrides || {};
   const renderItems = async () => {
     if (!salaryItemsList.length) {
       const {ok,data} = await api('/api/salary/items',{},true);
       if (ok) salaryItemsList = data;
     }
     const container = document.getElementById('ssm-items-list');
-    if (!salaryItemsList.length) { container.innerHTML='<span style="color:var(--muted);font-size:12px">尚無薪資項目</span>'; return; }
-    container.innerHTML = salaryItemsList.map(it => {
-      const checked = selectedIds.length===0 || selectedIds.includes(it.id);
-      const typeLabel = it.item_type==='allowance'?'<span style="color:var(--green);font-size:10px">加</span>':'<span style="color:#d64242;font-size:10px">扣</span>';
-      return `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
-        <input type="checkbox" data-item-id="${it.id}" ${checked?'checked':''} style="accent-color:${it.color||'var(--green)'};width:15px;height:15px">
-        <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${it.color||'#4a7bda'}"></span>
-        ${typeLabel} ${escHtml(it.name)}
-      </label>`;
+    if (!salaryItemsList.length) {
+      container.innerHTML='<div style="padding:14px;color:var(--muted);font-size:12px">尚無薪資項目</div>'; return;
+    }
+    // Header row
+    const hdr = `<div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;
+         padding:6px 12px;background:var(--bg);border-bottom:1px solid var(--border);
+         font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">
+      <span>啟用</span><span>項目名稱</span><span style="text-align:right">個人金額（選填）</span>
+    </div>`;
+    const rows = salaryItemsList.map((it, idx) => {
+      const checked  = selectedIds.length===0 || selectedIds.includes(it.id);
+      const ov       = overrides[String(it.id)];
+      const isAllow  = it.item_type === 'allowance';
+      const typeColor= isAllow ? 'var(--green)' : 'var(--red)';
+      const typeLbl  = isAllow ? '加' : '扣';
+      const defaultHint = it.formula
+        ? `公式：${it.formula.length > 28 ? it.formula.slice(0,28)+'…' : it.formula}`
+        : (it.amount ? `預設 $${fmtNum(it.amount)}` : '');
+      const rowBg = idx % 2 === 0 ? '#fff' : '#fafbfc';
+      return `<div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;
+           padding:8px 12px;border-bottom:1px solid #f0f2f8;background:${rowBg}">
+        <input type="checkbox" class="ssm-item-cb" data-item-id="${it.id}"
+               ${checked?'checked':''} style="accent-color:${it.color||'var(--accent)'};width:15px;height:15px;cursor:pointer">
+        <div>
+          <span style="font-size:13px;font-weight:600">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:2px;
+                 background:${it.color||'#4a7bda'};margin-right:5px;vertical-align:middle"></span>
+            <span style="color:${typeColor};font-size:10px;font-weight:700;margin-right:4px">${typeLbl}</span>
+            ${escHtml(it.name)}
+          </span>
+          ${defaultHint?`<div style="font-size:11px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace">${escHtml(defaultHint)}</div>`:''}
+        </div>
+        <input type="number" class="ssm-item-amt" data-item-id="${it.id}"
+               value="${ov !== undefined && ov !== null ? ov : ''}"
+               placeholder="使用公式/預設" min="0" step="1"
+               style="width:130px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;
+                      font-family:'DM Mono',monospace;font-size:13px;text-align:right;color:var(--text);
+                      background:${ov !== undefined && ov !== null ? '#fffbeb' : 'var(--bg)'}">
+      </div>`;
     }).join('');
+    container.innerHTML = hdr + rows;
+    // Highlight amount field when edited
+    container.querySelectorAll('.ssm-item-amt').forEach(inp => {
+      inp.addEventListener('input', () => {
+        inp.style.background = inp.value ? '#fffbeb' : 'var(--bg)';
+      });
+    });
   };
   renderItems();
   document.getElementById('sal-staff-modal').style.display='flex';
@@ -4781,10 +4821,21 @@ function toggleSalType() {
 }
 async function saveSalStaff() {
   const id = document.getElementById('ssm-id').value;
-  // 收集勾選的薪資項目；若全部勾選或無項目則存 null（代表使用全部）
-  const checkboxes = document.querySelectorAll('#ssm-items-list input[type=checkbox]');
+  // 收集勾選的薪資項目與個人金額覆寫
+  const checkboxes = document.querySelectorAll('#ssm-items-list .ssm-item-cb');
   const allChecked = [...checkboxes].every(c=>c.checked);
   const selectedItemIds = allChecked ? null : [...checkboxes].filter(c=>c.checked).map(c=>parseInt(c.dataset.itemId));
+  // 個人金額覆寫：有填金額才存入
+  const overrideInputs = document.querySelectorAll('#ssm-items-list .ssm-item-amt');
+  const salaryItemOverrides = {};
+  let hasOverride = false;
+  overrideInputs.forEach(inp => {
+    const v = inp.value.trim();
+    if (v !== '' && !isNaN(parseFloat(v))) {
+      salaryItemOverrides[inp.dataset.itemId] = parseFloat(v);
+      hasOverride = true;
+    }
+  });
   const body = {
     employee_code: document.getElementById('ssm-code').value.trim(),
     department:    document.getElementById('ssm-dept').value.trim(),
@@ -4799,7 +4850,8 @@ async function saveSalStaff() {
     ot_rate2:      parseFloat(document.getElementById('ssm-ot2').value)||1.67,
     vacation_quota:document.getElementById('ssm-vq').value?parseInt(document.getElementById('ssm-vq').value):null,
     salary_notes:  document.getElementById('ssm-notes').value.trim(),
-    salary_item_ids: selectedItemIds,
+    salary_item_ids:       selectedItemIds,
+    salary_item_overrides: hasOverride ? salaryItemOverrides : null,
   };
   const {ok} = await api(`/api/salary/staff/${id}`, apiPUT(body));
   if (!ok) return;
