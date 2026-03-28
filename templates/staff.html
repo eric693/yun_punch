@@ -313,6 +313,8 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
       </div>
       <!-- 請假申請 tab -->
       <div id="panel-leave" class="tab-body" style="display:none">
+        <!-- 特休年資卡 -->
+        <div id="annual-leave-card" style="margin-bottom:14px"></div>
         <!-- 假期餘額總覽 -->
         <div id="leave-balance-overview" style="margin-bottom:14px"></div>
 
@@ -352,6 +354,8 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 
       <!-- 薪資單 tab -->
       <div id="panel-payslip" class="tab-body" style="display:none">
+        <!-- 匯款帳號資訊 -->
+        <div id="payslip-bank-info" style="margin-bottom:14px"></div>
         <div class="month-row" style="margin-bottom:16px">
           <span style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">月份</span>
           <input type="month" class="month-inp" id="payslip-month" onchange="loadMyPayslip()">
@@ -1414,8 +1418,7 @@ async function initLeaveTab() {
     document.getElementById('leave-end').value   = today;
   }
   previewLeaveStaff();
-  await loadMyLeaveBalance();
-  await loadMyLeaveHistory();
+  await Promise.all([loadMyLeaveBalance(), loadAnnualLeaveCard(), loadMyLeaveHistory()]);
 }
 
 function updateLeaveTypeInfo() {
@@ -1434,6 +1437,100 @@ function updateLeaveTypeInfo() {
   document.getElementById('leave-type-info').innerHTML =
     `<span style="color:var(--accent)">${payLabel}</span>　${maxLabel}${balStr}`;
   previewLeaveStaff();
+}
+
+async function loadAnnualLeaveCard() {
+  const card = document.getElementById('annual-leave-card');
+  if (!card) return;
+  try {
+    const res = await fetch('/api/leave/annual-schedule/public');
+    if (!res.ok) { card.innerHTML = ''; return; }
+    const data = await res.json();
+    if (!data.hire_date) { card.innerHTML = ''; return; }
+    const schedule   = data.schedule || [];
+    const currentDays= data.current_days || 0;
+
+    // Find next milestone
+    const next = schedule.find(s => !s.is_past);
+    // Find current milestone
+    const curr = [...schedule].reverse().find(s => s.is_past);
+
+    // Calculate days to next milestone
+    let nextHtml = '';
+    if (next) {
+      const today   = new Date();
+      const reached = new Date(next.date_reached);
+      const diffMs  = reached - today;
+      const diffDays= Math.ceil(diffMs / 86400000);
+      if (diffDays > 0) {
+        nextHtml = `<div style="margin-top:8px;padding:8px 12px;background:rgba(74,123,218,0.08);border-radius:8px;border-left:3px solid var(--accent)">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:2px">下一里程碑</div>
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">
+            ${esc(next.label)} → <span style="color:var(--accent)">${next.days} 天/年</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:6px">（還有 ${diffDays} 天，${next.date_reached}）</span>
+          </div>
+        </div>`;
+      }
+    }
+
+    // Service years calculation
+    const hire = new Date(data.hire_date);
+    const now  = new Date();
+    const totalMonths = (now.getFullYear() - hire.getFullYear()) * 12 + (now.getMonth() - hire.getMonth())
+      - (now.getDate() < hire.getDate() ? 1 : 0);
+    const years  = Math.floor(totalMonths / 12);
+    const months = totalMonths % 12;
+    const svcLabel = totalMonths < 12
+      ? `${totalMonths} 個月`
+      : (months > 0 ? `${years} 年 ${months} 個月` : `${years} 年`);
+
+    // Next quota progress bar (months to next milestone)
+    let progressHtml = '';
+    if (next && curr) {
+      const totalMsInPeriod = new Date(next.date_reached) - new Date(curr.date_reached);
+      const elapsedMs = now - new Date(curr.date_reached);
+      const pct = Math.min(100, Math.max(0, Math.round((elapsedMs / totalMsInPeriod) * 100)));
+      progressHtml = `
+        <div style="margin-top:6px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:3px">
+            <span>${esc(curr.label)} (${curr.days}天)</span>
+            <span>${esc(next.label)} (${next.days}天)</span>
+          </div>
+          <div style="height:6px;background:#f0f2f8;border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),#6b9de8);border-radius:3px;transition:width .4s"></div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;text-align:right">${pct}%</div>
+        </div>`;
+    }
+
+    card.innerHTML = `
+    <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);overflow:hidden">
+      <div style="padding:10px 14px;background:var(--navy);display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:700;color:#fff">特休假年資</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.55)">到職 ${esc(data.hire_date)}</div>
+      </div>
+      <div style="padding:12px 14px">
+        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+          <div>
+            <span style="font-size:11px;color:var(--muted)">年資</span>
+            <span style="font-size:16px;font-weight:700;color:var(--navy);margin-left:6px">${esc(svcLabel)}</span>
+          </div>
+          <div style="margin-left:auto;text-align:right">
+            <span style="font-size:11px;color:var(--muted)">目前特休</span>
+            <span style="font-family:'DM Mono',monospace;font-size:22px;font-weight:700;color:var(--green);margin-left:6px">${currentDays}</span>
+            <span style="font-size:11px;color:var(--muted)">天/年</span>
+          </div>
+        </div>
+        ${progressHtml}
+        ${nextHtml}
+        <div style="margin-top:10px;text-align:right">
+          <button class="btn btn-sm btn-outline" style="font-size:11px" onclick="showMyAnnualSchedule()">查看完整排程</button>
+        </div>
+      </div>
+    </div>`;
+  } catch(e) {
+    document.getElementById('annual-leave-card').innerHTML = '';
+  }
 }
 
 async function loadMyLeaveBalance() {
@@ -1686,7 +1783,32 @@ async function initPayslipTab() {
   const ym  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   if (!document.getElementById('payslip-month').value)
     document.getElementById('payslip-month').value = ym;
+  renderPayslipBankInfo();
   await loadMyPayslip();
+}
+
+function renderPayslipBankInfo() {
+  const wrap = document.getElementById('payslip-bank-info');
+  if (!wrap || !me) return;
+  const acct = me.bank_account || '';
+  if (!acct && !me.bank_name) { wrap.innerHTML = ''; return; }
+  const masked = acct.length > 4
+    ? acct.slice(0,-4).replace(/./g,'*') + acct.slice(-4)
+    : acct;
+  const bankLabel = [me.bank_code, me.bank_name, me.bank_branch].filter(Boolean).join(' ');
+  wrap.innerHTML = `
+  <div style="background:#fff;border-radius:10px;border:1.5px solid var(--border);padding:12px 14px;display:flex;align-items:center;gap:12px">
+    <div style="width:34px;height:34px;border-radius:50%;background:var(--navy);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <span style="color:#fff;font-size:16px">🏦</span>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:2px">薪資匯款帳號</div>
+      ${bankLabel ? `<div style="font-size:12px;color:var(--muted);margin-bottom:2px">${esc(bankLabel)}</div>` : ''}
+      <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:600;color:var(--navy);letter-spacing:.06em">${esc(masked||'尚未設定')}</div>
+      ${me.account_holder ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">戶名：${esc(me.account_holder)}</div>` : ''}
+    </div>
+    <div style="font-size:10px;color:var(--muted);text-align:right">如有錯誤<br>請聯絡管理員</div>
+  </div>`;
 }
 
 async function loadMyPayslip() {

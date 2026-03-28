@@ -266,6 +266,11 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_type TEXT DEFAULT 'monthly'",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS vacation_quota INT DEFAULT NULL",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_code TEXT DEFAULT ''",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT ''",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_branch TEXT DEFAULT ''",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_account TEXT DEFAULT ''",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS account_holder TEXT DEFAULT ''",
         "ALTER TABLE overtime_requests ADD COLUMN IF NOT EXISTS day_type TEXT DEFAULT 'weekday'",
         "ALTER TABLE schedule_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
         """CREATE TABLE IF NOT EXISTS admin_accounts (
@@ -322,6 +327,58 @@ def keep_alive():
         time.sleep(14 * 60)
 
 threading.Thread(target=keep_alive, daemon=True).start()
+
+
+# ─── 特休自動同步 ─────────────────────────────────────────────────────────────
+
+def _run_annual_leave_sync():
+    """依勞基法第38條，依到職日計算特休天數，寫入 leave_balances。每日午夜自動執行。"""
+    from datetime import date as _d_sync
+    import json as _json_sync
+    year = str(_d_sync.today().year)
+    try:
+        with get_db() as conn:
+            staff_list = conn.execute(
+                "SELECT id, name, hire_date FROM punch_staff WHERE active=TRUE AND hire_date IS NOT NULL"
+            ).fetchall()
+            lt = conn.execute("SELECT id FROM leave_types WHERE code='annual'").fetchone()
+            if not lt:
+                return
+            lt_id = lt['id']
+            for s in staff_list:
+                days = _calc_annual_leave_days(s['hire_date'])
+                conn.execute("""
+                    INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
+                    VALUES (%s,%s,%s,%s,0)
+                    ON CONFLICT (staff_id, leave_type_id, year) DO UPDATE
+                      SET total_days=EXCLUDED.total_days, updated_at=NOW()
+                """, (s['id'], lt_id, int(year), days))
+    except Exception as e:
+        print(f"[annual_leave_sync] {e}")
+
+
+def _annual_leave_sync_loop():
+    import time as _time_sync
+    from datetime import date as _d_loop, datetime as _dt_loop
+    # 啟動時立即執行一次
+    _run_annual_leave_sync()
+    while True:
+        # 計算距離明天 00:05 的秒數
+        now = _dt_loop.now()
+        from datetime import timedelta as _td_loop
+        tomorrow_05 = _dt_loop.combine(
+            _d_loop.today() + _td_loop(days=1),
+            _dt_loop.min.time()
+        ).replace(hour=0, minute=5)
+        sleep_secs = (tomorrow_05 - now).total_seconds()
+        if sleep_secs < 0:
+            sleep_secs = 3600
+        _time_sync.sleep(sleep_secs)
+        _run_annual_leave_sync()
+
+
+threading.Thread(target=_annual_leave_sync_loop, daemon=True).start()
+
 
 # ─── Health ───────────────────────────────────────────────────────────────────
 
@@ -913,6 +970,11 @@ def api_punch_staff_update(sid):
     active        = bool(b.get('active', True))
     employee_code = b.get('employee_code', '') or None
     if employee_code: employee_code = employee_code.strip() or None
+    bank_code     = (b.get('bank_code') or '').strip()
+    bank_name     = (b.get('bank_name') or '').strip()
+    bank_branch   = (b.get('bank_branch') or '').strip()
+    bank_account  = (b.get('bank_account') or '').strip()
+    account_holder= (b.get('account_holder') or '').strip()
     if not name or not username:
         return jsonify({'error': '姓名和帳號為必填'}), 400
     with get_db() as conn:
@@ -921,15 +983,19 @@ def api_punch_staff_update(sid):
                 return jsonify({'error': '密碼至少 4 個字元'}), 400
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,password_hash=%s,role=%s,active=%s,employee_code=%s
+                SET name=%s,username=%s,password_hash=%s,role=%s,active=%s,employee_code=%s,
+                    bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, _hash_pw(password), role, active, employee_code, sid)).fetchone()
+            """, (name, username, _hash_pw(password), role, active, employee_code,
+                  bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
         else:
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,role=%s,active=%s,employee_code=%s
+                SET name=%s,username=%s,role=%s,active=%s,employee_code=%s,
+                    bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, role, active, employee_code, sid)).fetchone()
+            """, (name, username, role, active, employee_code,
+                  bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 
 @app.route('/api/punch/staff/<int:sid>', methods=['DELETE'])

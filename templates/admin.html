@@ -1453,6 +1453,18 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">密碼 *</label><input class="form-input" id="psm-password" placeholder="至少 4 個字元" type="password"><div style="font-size:11px;color:var(--muted);margin-top:4px" id="psm-pw-hint">新增員工請輸入密碼</div></div>
         <div><label class="form-label">確認密碼</label><input class="form-input" id="psm-password2" placeholder="再輸入一次" type="password"></div>
       </div>
+      <div style="border-top:1.5px solid var(--border);margin:14px 0 10px;padding-top:12px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px">匯款帳號</div>
+        <div class="form-row">
+          <div><label class="form-label">銀行代碼</label><input class="form-input" id="psm-bank-code" placeholder="例：004" inputmode="numeric"></div>
+          <div><label class="form-label">銀行名稱</label><input class="form-input" id="psm-bank-name" placeholder="例：台灣銀行"></div>
+        </div>
+        <div class="form-row">
+          <div><label class="form-label">分行名稱</label><input class="form-input" id="psm-bank-branch" placeholder="例：信義分行"></div>
+          <div><label class="form-label">帳戶名義人</label><input class="form-input" id="psm-account-holder" placeholder="例：王小明"></div>
+        </div>
+        <div><label class="form-label">帳號</label><input class="form-input" id="psm-bank-account" placeholder="例：123456789012" inputmode="numeric" style="font-family:'DM Mono',monospace;letter-spacing:.04em"></div>
+      </div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closePunchStaffModal()">取消</button><button class="btn btn-primary" onclick="savePunchStaff()">儲存</button></div>
   </div>
@@ -3423,6 +3435,7 @@ function openPunchStaffModal(id=null) {
   punchEditStaffId = id;
   document.getElementById('psm-title').textContent = id ? '編輯員工' : '新增員工';
   document.getElementById('psm-password').value = ''; document.getElementById('psm-password2').value = '';
+  const bankFields = ['psm-bank-code','psm-bank-name','psm-bank-branch','psm-bank-account','psm-account-holder'];
   if (id) {
     const s = punchStaffList.find(x => x.id === id); if (!s) return;
     document.getElementById('psm-id').value       = s.id;
@@ -3432,8 +3445,13 @@ function openPunchStaffModal(id=null) {
     document.getElementById('psm-username').value = s.username || '';
     document.getElementById('psm-active').value   = s.active ? '1' : '0';
     document.getElementById('psm-pw-hint').textContent = '留空表示不修改密碼';
+    document.getElementById('psm-bank-code').value     = s.bank_code     || '';
+    document.getElementById('psm-bank-name').value     = s.bank_name     || '';
+    document.getElementById('psm-bank-branch').value   = s.bank_branch   || '';
+    document.getElementById('psm-bank-account').value  = s.bank_account  || '';
+    document.getElementById('psm-account-holder').value= s.account_holder|| '';
   } else {
-    ['psm-id','psm-name','psm-code','psm-role','psm-username'].forEach(i => document.getElementById(i).value = '');
+    ['psm-id','psm-name','psm-code','psm-role','psm-username',...bankFields].forEach(i => document.getElementById(i).value = '');
     document.getElementById('psm-active').value = '1';
     document.getElementById('psm-pw-hint').textContent = '新增員工請輸入密碼';
   }
@@ -3447,12 +3465,17 @@ async function savePunchStaff() {
   if (pw && pw !== pw2)  { showToast('兩次密碼不一致', 'error'); return; }
   if (!id && !pw)        { showToast('請設定密碼', 'error'); return; }
   const body = {
-    name:          document.getElementById('psm-name').value.trim(),
-    employee_code: document.getElementById('psm-code').value.trim() || null,
-    username:      document.getElementById('psm-username').value.trim(),
-    role:          document.getElementById('psm-role').value.trim(),
-    password:      pw,
-    active:        document.getElementById('psm-active').value === '1'
+    name:           document.getElementById('psm-name').value.trim(),
+    employee_code:  document.getElementById('psm-code').value.trim() || null,
+    username:       document.getElementById('psm-username').value.trim(),
+    role:           document.getElementById('psm-role').value.trim(),
+    password:       pw,
+    active:         document.getElementById('psm-active').value === '1',
+    bank_code:      document.getElementById('psm-bank-code').value.trim(),
+    bank_name:      document.getElementById('psm-bank-name').value.trim(),
+    bank_branch:    document.getElementById('psm-bank-branch').value.trim(),
+    bank_account:   document.getElementById('psm-bank-account').value.trim(),
+    account_holder: document.getElementById('psm-account-holder').value.trim(),
   };
   if (!body.name)     { showToast('請填寫姓名', 'error'); return; }
   if (!body.username) { showToast('請填寫帳號', 'error'); return; }
