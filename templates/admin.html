@@ -2336,7 +2336,7 @@ function closeSidebar() {
 function showPage(page, e) {
   if (e) e.preventDefault();
   // 權限檢查（儀表板和帳號管理不受模組限制）
-  const moduleGuard = { punch:'punch', sched:'sched', leave:'leave', salary:'salary', ann:'ann', holiday:'holiday' };
+  const moduleGuard = { punch:'punch', sched:'sched', leave:'leave', salary:'salary', ann:'ann', holiday:'holiday', finance:'finance' };
   if (moduleGuard[page] && !hasModule(moduleGuard[page])) {
     showToast('您沒有此功能的存取權限', 'error'); return;
   }
@@ -4615,7 +4615,7 @@ document.addEventListener('DOMContentLoaded', () => { refreshBadges(); setInterv
   if (nameEl && ADMIN_DISPLAY_NAME) nameEl.textContent = ADMIN_DISPLAY_NAME;
 
   // 依權限顯示/隱藏導覽項目
-  const moduleKeys = ['punch','sched','leave','salary','ann','holiday'];
+  const moduleKeys = ['punch','sched','leave','salary','ann','holiday','finance'];
   moduleKeys.forEach(m => {
     const el = document.getElementById('nav-' + m);
     if (el && !hasModule(m)) el.style.display = 'none';
