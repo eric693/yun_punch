@@ -1085,7 +1085,7 @@ def api_attendance_monthly_stats():
     stats = defaultdict(lambda: {
         'staff_id': None, 'staff_name': '', 'department': '', 'role': '',
         'days_worked': 0, 'total_minutes': 0,
-        'late_count': 0, 'missing_in_count': 0, 'missing_out_count': 0,
+        'late_count': 0, 'early_count': 0, 'missing_in_count': 0, 'missing_out_count': 0,
         'anomaly_dates': [],
     })
 
@@ -1130,6 +1130,22 @@ def api_attendance_monthly_stats():
                         s['late_count'] += 1
                         s['anomaly_dates'].append({'date': ds, 'type': 'late',
                                                    'label': f'遲到 {late_mins} 分鐘'})
+                except Exception:
+                    pass
+
+        # 早退（比對班別）
+        if has_out and r['clock_out']:
+            shift = shift_map.get((sid, ds))
+            if shift and shift['end_time']:
+                try:
+                    eh, em = map(int, str(shift['end_time'])[:5].split(':'))
+                    co_local = r['clock_out']
+                    oh, om   = co_local.hour, co_local.minute
+                    early_mins = (eh * 60 + em) - (oh * 60 + om)
+                    if early_mins > 15:
+                        s['early_count'] += 1
+                        s['anomaly_dates'].append({'date': ds, 'type': 'early',
+                                                   'label': f'早退 {early_mins} 分鐘'})
                 except Exception:
                     pass
 
@@ -5165,9 +5181,9 @@ def api_attendance_anomalies():
             ORDER BY work_date DESC, ps.name
         """, (date_from, today)).fetchall()
 
-        # 取得班別指派（用於遲到判斷）
+        # 取得班別指派（用於遲到／早退判斷）
         shift_rows = conn.execute("""
-            SELECT sa.staff_id, sa.date, st.start_time, st.name as shift_name
+            SELECT sa.staff_id, sa.date, st.start_time, st.end_time, st.name as shift_name
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
             WHERE sa.date BETWEEN %s AND %s
@@ -5235,13 +5251,36 @@ def api_attendance_anomalies():
                         anomalies.append({
                             'type':       'late',
                             'label':      '遲到',
-                            'severity':   'info',
+                            'severity':   'warning',
                             'staff_id':   r['staff_id'],
                             'name':       r['name'],
                             'role':       r['role'] or '',
                             'department': r['department'] or '',
                             'date':       ds,
                             'detail':     f"應 {shift['start_time'][:5]} 上班，實際 {r['first_in']}（晚 {late_mins} 分鐘）",
+                        })
+                except Exception:
+                    pass
+
+        # 早退判斷（有班別指派）
+        if has_out and r['last_out'] and ds != str(today):
+            shift = shift_map.get((r['staff_id'], ds))
+            if shift and shift['end_time']:
+                try:
+                    eh, em = map(int, str(shift['end_time'])[:5].split(':'))
+                    oh, om = map(int, r['last_out'].split(':'))
+                    early_mins = (eh * 60 + em) - (oh * 60 + om)
+                    if early_mins > 15:  # 超過15分鐘算早退
+                        anomalies.append({
+                            'type':       'early',
+                            'label':      '早退',
+                            'severity':   'warning',
+                            'staff_id':   r['staff_id'],
+                            'name':       r['name'],
+                            'role':       r['role'] or '',
+                            'department': r['department'] or '',
+                            'date':       ds,
+                            'detail':     f"應 {shift['end_time'][:5]} 下班，實際 {r['last_out']}（早 {early_mins} 分鐘）",
                         })
                 except Exception:
                     pass

@@ -632,7 +632,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <!-- 異常告警 -->
     <div id="punch-panel-anomaly" style="display:none">
       <div class="filter-bar" style="margin-bottom:16px;gap:12px">
-        <span style="font-size:13px;color:var(--muted)">自動偵測近 7 天出勤異常（遲到、缺打卡、今日未出勤）</span>
+        <span style="font-size:13px;color:var(--muted)">自動偵測近 7 天出勤異常（遲到、早退、缺打卡、今日未出勤）</span>
         <span style="flex:1"></span>
         <button class="btn btn-outline btn-sm" onclick="loadPunchAnomalies()">重新整理</button>
       </div>
@@ -665,11 +665,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
                 <th style="text-align:center">總工時</th>
                 <th style="text-align:center">平均時數/天</th>
                 <th style="text-align:center">遲到</th>
+                <th style="text-align:center">早退</th>
                 <th style="text-align:center">缺打卡</th>
                 <th>異常明細</th>
               </tr>
             </thead>
-            <tbody id="mstats-tbody"><tr><td colspan="8" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr></tbody>
+            <tbody id="mstats-tbody"><tr><td colspan="9" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr></tbody>
           </table>
         </div>
         <div id="mstats-footer" style="display:none;padding:10px 18px;border-top:2px solid var(--border);background:#f7f9fd;font-size:13px;font-weight:700"></div>
@@ -2810,26 +2811,28 @@ async function loadMonthlyStats() {
   const month = document.getElementById('mstats-month').value;
   const tb = document.getElementById('mstats-tbody');
   const footer = document.getElementById('mstats-footer');
-  if (!month) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr>'; return; }
-  tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>';
+  if (!month) { tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr>'; return; }
+  tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>';
   const { ok, data } = await api(`/api/attendance/monthly-stats?month=${month}`, {}, true);
   if (!ok || !data.stats || !data.stats.length) {
-    tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">該月無出勤資料</div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">該月無出勤資料</div></td></tr>';
     footer.style.display = 'none';
     _mstatsData = [];
     return;
   }
   _mstatsData = data.stats;
-  let totalDays = 0, totalHours = 0, totalLate = 0, totalMissing = 0;
+  let totalDays = 0, totalHours = 0, totalLate = 0, totalEarly = 0, totalMissing = 0;
   tb.innerHTML = data.stats.map(r => {
-    totalDays   += r.days_worked || 0;
-    totalHours  += r.total_minutes || 0;
-    totalLate   += r.late_count || 0;
+    totalDays    += r.days_worked || 0;
+    totalHours   += r.total_minutes || 0;
+    totalLate    += r.late_count || 0;
+    totalEarly   += r.early_count || 0;
     totalMissing += (r.missing_in_count || 0) + (r.missing_out_count || 0);
+    const ATYPE_BG    = { late:'#fff3cd', early:'#fff0e6', missing_in:'#fff5f5', missing_out:'#fff5f5', default:'#eff6ff' };
+    const ATYPE_COLOR = { late:'#92660c', early:'#b85c00', missing_in:'var(--red)', missing_out:'var(--red)', default:'var(--accent)' };
     const anomalyTips = (r.anomaly_dates || []).slice(0, 5).map(a =>
       `<span style="display:inline-block;margin:1px 3px 1px 0;padding:1px 6px;border-radius:10px;font-size:11px;
-       background:${a.type==='late'?'#fff3cd':a.type==='missing'?'#fff5f5':'#eff6ff'};
-       color:${a.type==='late'?'#92660c':a.type==='missing'?'var(--red)':'var(--accent)'}">
+       background:${ATYPE_BG[a.type]||ATYPE_BG.default};color:${ATYPE_COLOR[a.type]||ATYPE_COLOR.default}">
        ${a.date} ${escHtml(a.label)}</span>`).join('');
     const moreCount = (r.anomaly_dates || []).length - 5;
     return `<tr>
@@ -2839,25 +2842,26 @@ async function loadMonthlyStats() {
       <td style="text-align:center;font-family:'DM Mono',monospace">${r.total_hm||'0h 0m'}</td>
       <td style="text-align:center;font-family:'DM Mono',monospace">${r.avg_hours_day||'—'}</td>
       <td style="text-align:center;color:${(r.late_count||0)>0?'#e07b2a':'inherit'};font-weight:${(r.late_count||0)>0?700:400}">${r.late_count||0}</td>
+      <td style="text-align:center;color:${(r.early_count||0)>0?'#b85c00':'inherit'};font-weight:${(r.early_count||0)>0?700:400}">${r.early_count||0}</td>
       <td style="text-align:center;color:${((r.missing_in_count||0)+(r.missing_out_count||0))>0?'var(--red)':'inherit'}">${(r.missing_in_count||0)+(r.missing_out_count||0)}</td>
       <td style="font-size:12px">${anomalyTips}${moreCount>0?`<span style="color:var(--muted)">+${moreCount}筆</span>`:''}</td>
     </tr>`;
   }).join('');
   const th = Math.floor(totalHours / 60), tm = totalHours % 60;
   footer.style.display = '';
-  footer.textContent = `合計：${data.stats.length} 人 ／ 出勤 ${totalDays} 天 ／ 總工時 ${th}h ${tm}m ／ 遲到 ${totalLate} 次 ／ 缺打卡 ${totalMissing} 次`;
+  footer.textContent = `合計：${data.stats.length} 人 ／ 出勤 ${totalDays} 天 ／ 總工時 ${th}h ${tm}m ／ 遲到 ${totalLate} 次 ／ 早退 ${totalEarly} 次 ／ 缺打卡 ${totalMissing} 次`;
 }
 
 function exportMonthlyStats() {
   const month = document.getElementById('mstats-month').value;
   if (!_mstatsData.length) { showToast('請先查詢月統計資料', true); return; }
-  const rows = [['姓名','部門','出勤天數','總工時','平均時數/天','遲到次數','缺打卡次數','異常明細']];
+  const rows = [['姓名','部門','出勤天數','總工時','平均時數/天','遲到次數','早退次數','缺打卡次數','異常明細']];
   _mstatsData.forEach(r => {
     const anomalyText = (r.anomaly_dates || []).map(a => `${a.date} ${a.label}`).join('; ');
     rows.push([
       r.name||'', r.department||'',
       r.days_worked||0, r.total_hm||'0h 0m', r.avg_hours_day||'—',
-      r.late_count||0, (r.missing_in_count||0)+(r.missing_out_count||0),
+      r.late_count||0, r.early_count||0, (r.missing_in_count||0)+(r.missing_out_count||0),
       anomalyText
     ]);
   });
@@ -3907,6 +3911,8 @@ async function doShiftImport() {
 const LEAVE_STATUS_LABEL = {pending:'待審核',approved:'已核准',rejected:'已退回'};
 const LEAVE_STATUS_COLOR = {pending:'var(--orange)',approved:'var(--green)',rejected:'var(--red)'};
 let leaveReqData=[], leaveTypesList=[], leaveStaffList=[];
+let _leaveBalCache = {};   // key: `${staff_id}_${leave_type_id}` → {total, used, remain}
+let _leaveBalCacheYear = null;
 let leaveReviewId=null;
 
 function initLeave() {
@@ -3955,10 +3961,27 @@ async function loadLeaveRequests() {
   if (month)  url += `month=${month}&`;
   if (status) url += `status=${status}&`;
   if (staffId) url += `staff_id=${staffId}&`;
-  const {ok,data} = await api(url,{},true);
-  leaveReqData = ok?data:[];
+  const [{ok,data}, balRes] = await Promise.all([
+    api(url, {}, true),
+    _refreshLeaveBalCache(month ? month.slice(0,4) : String(new Date().getFullYear()))
+  ]);
+  leaveReqData = ok ? data : [];
   document.getElementById('leave-req-count').textContent = `共 ${leaveReqData.length} 筆`;
   renderLeaveRequests();
+}
+
+async function _refreshLeaveBalCache(year) {
+  if (_leaveBalCacheYear === year && Object.keys(_leaveBalCache).length) return;
+  const {ok, data} = await api(`/api/leave/balances?year=${year}`, {}, true);
+  _leaveBalCache = {};
+  _leaveBalCacheYear = year;
+  if (ok) data.forEach(b => {
+    _leaveBalCache[`${b.staff_id}_${b.leave_type_id}`] = {
+      total: b.total_days || 0, used: b.used_days || 0,
+      remain: (b.total_days || 0) - (b.used_days || 0),
+      max_days: b.max_days,
+    };
+  });
 }
 
 function renderLeaveRequests() {
@@ -3977,6 +4000,14 @@ function renderLeaveRequests() {
           <span class="card-title">${escHtml(r.staff_name||'')}</span>
           ${r.staff_role?`<span style="font-size:12px;color:var(--muted);margin-left:8px">${escHtml(r.staff_role)}</span>`:''}
           <span style="display:inline-block;margin-left:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${escHtml(r.leave_type_name||'')}</span>
+          ${(()=>{
+            const bal = _leaveBalCache[`${r.staff_id}_${r.leave_type_id}`];
+            if (!bal || bal.max_days === null) return '';
+            const afterUse = bal.remain - (r.total_days || 0);
+            if (afterUse < 0) return `<span style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700;background:#ffe0e0;color:var(--red)">超出額度 ${Math.abs(afterUse).toFixed(1)} 天</span>`;
+            if (afterUse <= 2) return `<span style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700;background:#fff3cd;color:#92660c">核准後剩 ${afterUse.toFixed(1)} 天</span>`;
+            return `<span style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:11px;background:#f0f2f8;color:var(--muted)">餘額 ${bal.remain.toFixed(1)} 天</span>`;
+          })()}
           <div style="font-size:12px;color:var(--muted);margin-top:3px">
             ${r.start_date}${sHalf} ~ ${r.end_date}${eHalf}
             &nbsp;|&nbsp; <strong>${r.total_days} 天</strong>
@@ -4031,7 +4062,7 @@ async function openLeaveAdminModal(id=null) {
     document.getElementById('lam-start').value = today;
     document.getElementById('lam-end').value   = today;
   }
-  ['lam-start','lam-end','lam-start-half','lam-end-half'].forEach(id2 =>
+  ['lam-start','lam-end','lam-start-half','lam-end-half','lam-staff','lam-type'].forEach(id2 =>
     document.getElementById(id2).addEventListener('change', previewLeaveDays)
   );
   previewLeaveDays();
@@ -4059,7 +4090,20 @@ function previewLeaveDays() {
     }
     cur.setDate(cur.getDate()+1);
   }
-  document.getElementById('lam-days-preview').textContent = `預計請假：${days} 天（排除週日）`;
+  const staffId  = document.getElementById('lam-staff').value;
+  const typeId   = document.getElementById('lam-type').value;
+  const bal = _leaveBalCache[`${staffId}_${typeId}`];
+  let balNote = '';
+  if (bal && bal.max_days !== null) {
+    const afterUse = bal.remain - days;
+    if (afterUse < 0)
+      balNote = ` ｜ <span style="color:var(--red);font-weight:700">⚠ 超出餘額 ${Math.abs(afterUse).toFixed(1)} 天（剩 ${bal.remain.toFixed(1)} 天）</span>`;
+    else if (afterUse <= 2)
+      balNote = ` ｜ <span style="color:#92660c;font-weight:700">核准後剩 ${afterUse.toFixed(1)} 天（低額警示）</span>`;
+    else
+      balNote = ` ｜ <span style="color:var(--green)">核准後剩 ${afterUse.toFixed(1)} 天</span>`;
+  }
+  document.getElementById('lam-days-preview').innerHTML = `預計請假：<strong>${days} 天</strong>（排除週日）${balNote}`;
 }
 
 async function saveLeaveAdmin() {
@@ -4090,11 +4134,22 @@ function openLeaveReview(id) {
   document.getElementById('lrm-note').value= '';
   document.getElementById('lrm-title').textContent = `審核 ${r.staff_name} 的請假申請`;
   const sh = r.start_half?' (下午)':''; const eh = r.end_half?' (上午)':'';
+  const bal = _leaveBalCache[`${r.staff_id}_${r.leave_type_id}`];
+  let balHtml = '';
+  if (bal && bal.max_days !== null) {
+    const afterUse = bal.remain - (r.total_days || 0);
+    const balColor = afterUse < 0 ? 'var(--red)' : afterUse <= 2 ? '#92660c' : 'var(--green)';
+    const balBg    = afterUse < 0 ? '#ffe0e0' : afterUse <= 2 ? '#fff3cd' : '#e8f9f0';
+    const balMsg   = afterUse < 0
+      ? `⚠ 超出額度！核准後將超用 ${Math.abs(afterUse).toFixed(1)} 天`
+      : `核准後剩餘：${afterUse.toFixed(1)} 天（目前已用 ${bal.used.toFixed(1)} / ${bal.total.toFixed(1)} 天）`;
+    balHtml = `<div style="margin-top:8px;padding:7px 12px;border-radius:6px;background:${balBg};color:${balColor};font-size:12px;font-weight:600">${balMsg}</div>`;
+  }
   document.getElementById('lrm-info').innerHTML = `
     <strong>${escHtml(r.staff_name)}</strong>
     <span style="margin-left:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${escHtml(r.leave_type_name)}</span><br>
     ${r.start_date}${sh} ~ ${r.end_date}${eh}　<strong>${r.total_days} 天</strong><br>
-    <span style="color:var(--muted)">${escHtml(r.reason||'（無說明）')}</span>`;
+    <span style="color:var(--muted)">${escHtml(r.reason||'（無說明）')}</span>${balHtml}`;
   document.getElementById('leave-review-modal').style.display='flex';
 }
 function closeLeaveReview() { document.getElementById('leave-review-modal').style.display='none'; }
@@ -4161,6 +4216,27 @@ async function loadLeaveBalances() {
   const {ok,data} = await api(`/api/leave/balances?year=${year}`,{},true);
   const wrap = document.getElementById('leave-bal-wrap');
   if (!ok||!data.length) { wrap.innerHTML='<div class="card" style="padding:32px;text-align:center;color:var(--muted)">無資料，請先點選「自動計算特休」</div>'; return; }
+  // 統計低額度警示
+  const warnings = data.filter(it => {
+    if (it.max_days === null) return false;
+    const remain = (it.total_days||0) - (it.used_days||0);
+    return remain <= 0;
+  });
+  const lowBal = data.filter(it => {
+    if (it.max_days === null) return false;
+    const remain = (it.total_days||0) - (it.used_days||0);
+    const pct = (it.total_days||0) > 0 ? remain / it.total_days : 1;
+    return remain > 0 && (remain <= 2 || pct <= 0.2);
+  });
+  let summaryHtml = '';
+  if (warnings.length || lowBal.length) {
+    const warnItems = warnings.map(it => `<span style="padding:2px 8px;border-radius:10px;font-size:12px;font-weight:700;background:#ffe0e0;color:var(--red)">${escHtml(it.staff_name)} ${escHtml(it.leave_type_name)}（已超用）</span>`).join(' ');
+    const lowItems  = lowBal.map(it  => `<span style="padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;background:#fff3cd;color:#92660c">${escHtml(it.staff_name)} ${escHtml(it.leave_type_name)}（剩 ${((it.total_days||0)-(it.used_days||0)).toFixed(1)} 天）</span>`).join(' ');
+    summaryHtml = `<div style="margin-bottom:12px;padding:10px 14px;border-radius:8px;border:1px solid #f5c6cb;background:#fff5f5;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <span style="font-size:12px;font-weight:700;color:var(--red);margin-right:4px">⚠ 餘額警示</span>
+      ${warnItems}${lowItems}
+    </div>`;
+  }
   // Group by staff
   const staffMap = {};
   data.forEach(r=>{
@@ -4171,21 +4247,27 @@ async function loadLeaveBalances() {
   Object.values(staffMap).forEach(s=>{
     s.items.forEach(it=>{
       const remain = (it.total_days||0)-(it.used_days||0);
+      const isExceeded = it.max_days !== null && remain < 0;
+      const isLow      = it.max_days !== null && remain >= 0 && (remain <= 2 || (it.total_days > 0 && remain/it.total_days <= 0.2));
+      const rowStyle   = isExceeded ? 'background:#fff5f5' : isLow ? 'background:#fffbeb' : '';
       const showSched = it.leave_code === 'annual'
         ? `<button class="btn btn-ghost btn-sm" onclick="showAnnualSchedule(${it.staff_id},'${escHtml(s.name)}')" title="查看特休排程">排程</button>`
         : '';
-      html+=`<tr>
+      const remainBadge = isExceeded
+        ? `<span style="color:var(--red);font-weight:700">${remain} 天 ⚠</span>`
+        : `<span style="font-family:'DM Mono',monospace;font-weight:700;color:${remain>0?'var(--green)':'var(--muted)'}">${remain}</span>`;
+      html+=`<tr style="${rowStyle}">
         <td style="font-weight:600">${escHtml(s.name)}</td>
         <td><span style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${it.leave_color||'#4a7bda'}22;color:${it.leave_color||'#4a7bda'}">${escHtml(it.leave_type_name)}</span></td>
         <td style="font-family:'DM Mono',monospace;font-weight:600">${it.total_days}</td>
         <td style="font-family:'DM Mono',monospace;color:var(--red)">${it.used_days}</td>
-        <td style="font-family:'DM Mono',monospace;font-weight:700;color:${remain>0?'var(--green)':'var(--red)'}">${remain}</td>
+        <td>${remainBadge}${isLow&&!isExceeded?` <span style="font-size:10px;color:#92660c">低額</span>`:''}</td>
         <td style="white-space:nowrap">${showSched}<button class="btn btn-outline btn-sm" onclick="editLeaveBalance(${it.id},${it.total_days},${it.used_days})">調整</button></td>
       </tr>`;
     });
   });
   html+='</tbody></table></div></div>';
-  wrap.innerHTML = html;
+  wrap.innerHTML = summaryHtml + html;
 }
 async function initAnnualLeave() {
   const year = document.getElementById('leave-bal-year').value;
