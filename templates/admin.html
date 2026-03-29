@@ -25,7 +25,7 @@ body { font-family: 'Noto Sans TC', sans-serif; background: var(--bg); color: va
 .sidebar-brand-title { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: 0.04em; }
 .sidebar-brand-sub { font-size: 10px; color: rgba(255,255,255,0.35); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 3px; }
 .sidebar-brand-bar { width: 24px; height: 2px; background: var(--gold); margin-top: 10px; }
-.sidebar-nav { flex: 1; padding: 20px 0; }
+.sidebar-nav { flex: 1; padding: 20px 0; overflow-y: auto; }
 .nav-label { font-size: 10px; color: rgba(255,255,255,0.3); letter-spacing: 0.12em; text-transform: uppercase; padding: 0 24px; margin-bottom: 8px; }
 .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 24px; font-size: 13px; color: rgba(255,255,255,0.6); cursor: pointer; transition: all 0.15s; border-left: 3px solid transparent; text-decoration: none; }
 .nav-badge { display: inline-flex; align-items: center; justify-content: center; background: #e53e3e; color: #fff; font-size: 10px; font-weight: 800; font-family: 'DM Mono', monospace; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; margin-left: auto; animation: badge-pop .2s ease; pointer-events: none; }
@@ -211,7 +211,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-adminmgr" onclick="showPage('adminmgr',event)" style="display:none">帳號管理</a>
   </nav>
   <div class="sidebar-bottom">
-    <a href="#" class="logout-btn" onclick="openBioPanel(event)" style="display:block;margin-bottom:8px;color:rgba(255,255,255,0.35)" id="bio-nav-link">☝️ 生物辨識綁定</a>
+    <a href="#" class="logout-btn" onclick="openBioPanel(event)" style="display:block;margin-bottom:8px;color:rgba(255,255,255,0.35)" id="bio-nav-link">生物辨識綁定</a>
     <a href="/admin/logout" class="logout-btn">登出系統</a>
   </div>
 </aside>
