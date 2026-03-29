@@ -2782,13 +2782,17 @@ const ADMIN_DISPLAY_NAME = {{ admin_display_name | tojson }};
 const ADMIN_PERMS        = {{ admin_permissions  | tojson }};
 const ADMIN_IS_SUPER     = {{ admin_is_super     | tojson }};
 const ALL_MODULES = [
-  { key:'punch',   label:'打卡管理' },
-  { key:'sched',   label:'排班管理' },
-  { key:'leave',   label:'請假管理' },
-  { key:'salary',  label:'薪資管理' },
-  { key:'ann',     label:'公告管理' },
-  { key:'holiday', label:'國定假日' },
-  { key:'finance', label:'財務管理' },
+  { key:'punch',          label:'打卡管理' },
+  { key:'sched',          label:'排班管理' },
+  { key:'leave',          label:'請假管理' },
+  { key:'salary',         label:'薪資管理' },
+  { key:'ann',            label:'公告管理' },
+  { key:'holiday',        label:'國定假日' },
+  { key:'finance',        label:'財務管理' },
+  { key:'expense-review', label:'費用審核' },
+  { key:'perf',           label:'績效考核' },
+  { key:'stores',         label:'門市管理' },
+  { key:'training',       label:'教育訓練' },
 ];
 function hasModule(m) { return ADMIN_IS_SUPER || ADMIN_PERMS.includes(m); }
 
@@ -3611,7 +3615,7 @@ function closeSidebar() {
 function showPage(page, e) {
   if (e) e.preventDefault();
   // 權限檢查（儀表板和帳號管理不受模組限制）
-  const moduleGuard = { punch:'punch', sched:'sched', leave:'leave', salary:'salary', ann:'ann', holiday:'holiday', finance:'finance' };
+  const moduleGuard = { punch:'punch', sched:'sched', leave:'leave', salary:'salary', ann:'ann', holiday:'holiday', finance:'finance', 'expense-review':'expense-review', perf:'perf', stores:'stores', training:'training' };
   if (moduleGuard[page] && !hasModule(moduleGuard[page])) {
     showToast('您沒有此功能的存取權限', 'error'); return;
   }
@@ -6407,7 +6411,7 @@ document.addEventListener('DOMContentLoaded', () => { refreshBadges(); setInterv
   if (nameEl && ADMIN_DISPLAY_NAME) nameEl.textContent = ADMIN_DISPLAY_NAME;
 
   // 依權限顯示/隱藏導覽項目
-  const moduleKeys = ['punch','sched','leave','salary','ann','holiday','finance'];
+  const moduleKeys = ['punch','sched','leave','salary','ann','holiday','finance','expense-review','perf','stores','training'];
   moduleKeys.forEach(m => {
     const el = document.getElementById('nav-' + m);
     if (el && !hasModule(m)) el.style.display = 'none';
