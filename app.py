@@ -10355,7 +10355,7 @@ def webauthn_register_complete():
 @app.route('/api/webauthn/auth/begin', methods=['POST'])
 def webauthn_auth_begin():
     b        = request.get_json(force=True) or {}
-    username = b.get('username', '').strip()
+    username = (b.get('username') or '').strip()
 
     allow_credentials = []
 
