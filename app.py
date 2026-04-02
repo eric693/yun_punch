@@ -39,7 +39,9 @@ handler      = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ─── Imports ──────────────────────────────────────────────────────────────────
 import json as _json
-from datetime import datetime as _dt, timedelta as _td
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+TW_TZ = _tz(_td(hours=8))   # Asia/Taipei (UTC+8)
 
 WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -396,17 +398,13 @@ def _run_annual_leave_sync():
 
 def _annual_leave_sync_loop():
     import time as _time_sync
-    from datetime import date as _d_loop, datetime as _dt_loop
     # 啟動時立即執行一次
     _run_annual_leave_sync()
     while True:
-        # 計算距離明天 00:05 的秒數
-        now = _dt_loop.now()
-        from datetime import timedelta as _td_loop
-        tomorrow_05 = _dt_loop.combine(
-            _d_loop.today() + _td_loop(days=1),
-            _dt_loop.min.time()
-        ).replace(hour=0, minute=5)
+        # 計算距離明天 00:05 台北時間的秒數
+        now = _dt.now(TW_TZ)
+        tmr = (now + _td(days=1)).date()
+        tomorrow_05 = _dt(tmr.year, tmr.month, tmr.day, 0, 5, tzinfo=TW_TZ)
         sleep_secs = (tomorrow_05 - now).total_seconds()
         if sleep_secs < 0:
             sleep_secs = 3600
@@ -1117,8 +1115,7 @@ def api_punch_record_delete(rid):
 @app.route('/api/punch/summary', methods=['GET'])
 @login_required
 def api_punch_summary():
-    from datetime import datetime as _dtnow
-    month = request.args.get('month') or _dtnow.now().strftime('%Y-%m')
+    month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
         rows = conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
@@ -1155,8 +1152,7 @@ def api_attendance_monthly_stats():
     月出勤統計報表（每位員工匯總）
     回傳：出勤天數、總工時、遲到次數、缺打卡次數、平均工時
     """
-    from datetime import datetime as _dts
-    month = request.args.get('month') or _dts.now().strftime('%Y-%m')
+    month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
         # 每人每日打卡彙整
         rows = conn.execute("""
@@ -2865,7 +2861,7 @@ def api_ot_delete(rid):
 @app.route('/api/overtime/monthly-summary', methods=['GET'])
 @login_required
 def api_ot_monthly_summary():
-    month = request.args.get('month', '') or _dt.now().strftime('%Y-%m')
+    month = request.args.get('month', '') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
         rows = conn.execute("""
             SELECT
@@ -4893,7 +4889,7 @@ def api_anomaly_report_excel():
     import calendar as _cal
     from datetime import datetime as _dtx, timedelta as _tdx
 
-    month = request.args.get('month', '') or _dt.now().strftime('%Y-%m')
+    month = request.args.get('month', '') or _dt.now(TW_TZ).strftime('%Y-%m')
     try:
         y, mo = int(month[:4]), int(month[5:7])
     except Exception:
@@ -7947,12 +7943,11 @@ def _bank_row(r):
 def api_bank_import():
     """匯入銀行對帳單 CSV"""
     import csv, io as _io
-    from datetime import datetime as _dt2
     file = request.files.get('file')
     if not file: return jsonify({'error': '請上傳 CSV 檔案'}), 400
     raw = file.read().decode('utf-8-sig', errors='replace')
     account_name = request.form.get('account_name', '').strip() or '銀行帳戶'
-    import_batch = _dt2.now().strftime('%Y%m%d%H%M%S')
+    import_batch = _dt.now(TW_TZ).strftime('%Y%m%d%H%M%S')
 
     reader = csv.reader(_io.StringIO(raw))
     rows_data = [r for r in reader if any(c.strip() for c in r)]
@@ -9758,7 +9753,7 @@ def mobile_attendance():
     if u['role'] != 'employee':
         return jsonify({'error': '僅員工可查詢'}), 403
     staff_id = int(u['sub'])
-    month = request.args.get('month', _dt.now().strftime('%Y-%m'))
+    month = request.args.get('month', _dt.now(TW_TZ).strftime('%Y-%m'))
     try:
         y, m = map(int, month.split('-'))
     except Exception:
@@ -9878,7 +9873,7 @@ def mobile_schedule():
     if u['role'] != 'employee':
         return jsonify({'error': '僅員工可查詢'}), 403
     staff_id = int(u['sub'])
-    month = request.args.get('month', _dt.now().strftime('%Y-%m'))
+    month = request.args.get('month', _dt.now(TW_TZ).strftime('%Y-%m'))
     try:
         y, m = map(int, month.split('-'))
     except Exception:
@@ -10156,7 +10151,7 @@ def mobile_admin_staff():
 @app.route('/api/mobile/admin/anomalies', methods=['GET'])
 @mobile_admin_required
 def mobile_admin_anomalies():
-    month = request.args.get('month', _dt.now().strftime('%Y-%m'))
+    month = request.args.get('month', _dt.now(TW_TZ).strftime('%Y-%m'))
     try:
         y, m = map(int, month.split('-'))
     except Exception:
