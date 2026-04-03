@@ -1985,10 +1985,15 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">員工代碼</label><input class="form-input" id="psm-code" placeholder="例：EMP001"></div>
       </div>
       <div class="form-row">
-        <div><label class="form-label">職稱</label><input class="form-input" id="psm-role" placeholder="例：外場、廚房"></div>
-        <div><label class="form-label">狀態</label><select class="form-input" id="psm-active"><option value="1">在職</option><option value="0">停用</option></select></div>
+        <div><label class="form-label">部門</label><input class="form-input" id="psm-department" placeholder="例：外場、廚房"></div>
+        <div><label class="form-label">職稱</label><input class="form-input" id="psm-role" placeholder="例：服務生、主廚"></div>
       </div>
       <div class="form-row">
+        <div><label class="form-label">到職日</label><input class="form-input" type="date" id="psm-hire-date"></div>
+        <div><label class="form-label">生日</label><input class="form-input" type="date" id="psm-birth-date"></div>
+      </div>
+      <div class="form-row">
+        <div><label class="form-label">狀態</label><select class="form-input" id="psm-active"><option value="1">在職</option><option value="0">停用</option></select></div>
         <div><label class="form-label">登入帳號 *</label><input class="form-input" id="psm-username" placeholder="英文或數字" autocapitalize="none"></div>
       </div>
       <div class="form-row">
@@ -3991,23 +3996,26 @@ function openPunchStaffModal(id=null) {
   punchEditStaffId = id;
   document.getElementById('psm-title').textContent = id ? '編輯員工' : '新增員工';
   document.getElementById('psm-password').value = ''; document.getElementById('psm-password2').value = '';
-  const bankFields = ['psm-bank-code','psm-bank-name','psm-bank-branch','psm-bank-account','psm-account-holder'];
+  const allFields = ['psm-bank-code','psm-bank-name','psm-bank-branch','psm-bank-account','psm-account-holder','psm-department','psm-hire-date','psm-birth-date'];
   if (id) {
     const s = punchStaffList.find(x => x.id === id); if (!s) return;
-    document.getElementById('psm-id').value       = s.id;
-    document.getElementById('psm-name').value     = s.name;
-    document.getElementById('psm-code').value     = s.employee_code || '';
-    document.getElementById('psm-role').value     = s.role || '';
-    document.getElementById('psm-username').value = s.username || '';
-    document.getElementById('psm-active').value   = s.active ? '1' : '0';
-    document.getElementById('psm-pw-hint').textContent = '留空表示不修改密碼';
-    document.getElementById('psm-bank-code').value     = s.bank_code     || '';
-    document.getElementById('psm-bank-name').value     = s.bank_name     || '';
-    document.getElementById('psm-bank-branch').value   = s.bank_branch   || '';
-    document.getElementById('psm-bank-account').value  = s.bank_account  || '';
-    document.getElementById('psm-account-holder').value= s.account_holder|| '';
+    document.getElementById('psm-id').value             = s.id;
+    document.getElementById('psm-name').value           = s.name;
+    document.getElementById('psm-code').value           = s.employee_code || '';
+    document.getElementById('psm-department').value     = s.department || '';
+    document.getElementById('psm-role').value           = s.role || '';
+    document.getElementById('psm-hire-date').value      = s.hire_date || '';
+    document.getElementById('psm-birth-date').value     = s.birth_date || '';
+    document.getElementById('psm-username').value       = s.username || '';
+    document.getElementById('psm-active').value         = s.active ? '1' : '0';
+    document.getElementById('psm-pw-hint').textContent  = '留空表示不修改密碼';
+    document.getElementById('psm-bank-code').value      = s.bank_code     || '';
+    document.getElementById('psm-bank-name').value      = s.bank_name     || '';
+    document.getElementById('psm-bank-branch').value    = s.bank_branch   || '';
+    document.getElementById('psm-bank-account').value   = s.bank_account  || '';
+    document.getElementById('psm-account-holder').value = s.account_holder|| '';
   } else {
-    ['psm-id','psm-name','psm-code','psm-role','psm-username',...bankFields].forEach(i => document.getElementById(i).value = '');
+    ['psm-id','psm-name','psm-code','psm-role','psm-username',...allFields].forEach(i => document.getElementById(i).value = '');
     document.getElementById('psm-active').value = '1';
     document.getElementById('psm-pw-hint').textContent = '新增員工請輸入密碼';
   }
@@ -4023,8 +4031,11 @@ async function savePunchStaff() {
   const body = {
     name:           document.getElementById('psm-name').value.trim(),
     employee_code:  document.getElementById('psm-code').value.trim() || null,
+    department:     document.getElementById('psm-department').value.trim(),
     username:       document.getElementById('psm-username').value.trim(),
     role:           document.getElementById('psm-role').value.trim(),
+    hire_date:      document.getElementById('psm-hire-date').value || null,
+    birth_date:     document.getElementById('psm-birth-date').value || null,
     password:       pw,
     active:         document.getElementById('psm-active').value === '1',
     bank_code:      document.getElementById('psm-bank-code').value.trim(),

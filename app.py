@@ -322,16 +322,25 @@ def init_db():
         except Exception as me:
             print(f"[MIGRATION SKIP] {sql[:70]}: {me}")
 
-    # Seed default super admin if no accounts exist
+    # Seed default super admin; always sync password from ADMIN_PASSWORD env var
     try:
+        all_modules = _json.dumps(['punch','sched','leave','salary','ann','holiday','finance'])
+        pw_hash = _hash_pw(ADMIN_PASSWORD)
         with get_db() as conn:
-            cnt = conn.execute("SELECT COUNT(*) as c FROM admin_accounts").fetchone()['c']
-            if cnt == 0:
-                all_modules = _json.dumps(['punch','sched','leave','salary','ann','holiday','finance'])
+            existing = conn.execute(
+                "SELECT id FROM admin_accounts WHERE username='admin'"
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE admin_accounts SET password_hash=%s, is_super=TRUE WHERE username='admin'",
+                    (pw_hash,)
+                )
+                print("[OK] admin password synced from ADMIN_PASSWORD env var")
+            else:
                 conn.execute("""
                     INSERT INTO admin_accounts (username, password_hash, display_name, permissions, is_super)
                     VALUES (%s,%s,'超級管理員',%s,TRUE)
-                """, ('admin', _hash_pw(ADMIN_PASSWORD), all_modules))
+                """, ('admin', pw_hash, all_modules))
                 print("[OK] Default super admin seeded (username: admin)")
     except Exception as e:
         print(f"[WARN] admin seed: {e}")
@@ -978,12 +987,25 @@ def api_punch_staff_create():
         return jsonify({'error': '密碼至少 4 個字元'}), 400
     employee_code = b.get('employee_code', '') or None
     if employee_code: employee_code = employee_code.strip() or None
+    department     = (b.get('department') or '').strip()
+    hire_date      = b.get('hire_date') or None
+    birth_date     = b.get('birth_date') or None
+    bank_code      = (b.get('bank_code') or '').strip()
+    bank_name      = (b.get('bank_name') or '').strip()
+    bank_branch    = (b.get('bank_branch') or '').strip()
+    bank_account   = (b.get('bank_account') or '').strip()
+    account_holder = (b.get('account_holder') or '').strip()
     try:
         with get_db() as conn:
             row = conn.execute("""
-                INSERT INTO punch_staff (name, username, password_hash, role, employee_code)
-                VALUES (%s,%s,%s,%s,%s) RETURNING *
-            """, (name, username, _hash_pw(password), b.get('role', '').strip(), employee_code)).fetchone()
+                INSERT INTO punch_staff
+                  (name, username, password_hash, role, employee_code,
+                   department, hire_date, birth_date,
+                   bank_code, bank_name, bank_branch, bank_account, account_holder)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            """, (name, username, _hash_pw(password), b.get('role', '').strip(), employee_code,
+                  department, hire_date, birth_date,
+                  bank_code, bank_name, bank_branch, bank_account, account_holder)).fetchone()
         return jsonify(punch_staff_row(row)), 201
     except psycopg.errors.UniqueViolation:
         return jsonify({'error': '姓名或帳號已存在，請換一個'}), 409
@@ -1005,11 +1027,14 @@ def api_punch_staff_update(sid):
     active        = bool(b.get('active', True))
     employee_code = b.get('employee_code', '') or None
     if employee_code: employee_code = employee_code.strip() or None
-    bank_code     = (b.get('bank_code') or '').strip()
-    bank_name     = (b.get('bank_name') or '').strip()
-    bank_branch   = (b.get('bank_branch') or '').strip()
-    bank_account  = (b.get('bank_account') or '').strip()
-    account_holder= (b.get('account_holder') or '').strip()
+    bank_code      = (b.get('bank_code') or '').strip()
+    bank_name      = (b.get('bank_name') or '').strip()
+    bank_branch    = (b.get('bank_branch') or '').strip()
+    bank_account   = (b.get('bank_account') or '').strip()
+    account_holder = (b.get('account_holder') or '').strip()
+    department     = (b.get('department') or '').strip()
+    hire_date      = b.get('hire_date') or None
+    birth_date     = b.get('birth_date') or None
     if not name or not username:
         return jsonify({'error': '姓名和帳號為必填'}), 400
     with get_db() as conn:
@@ -1019,17 +1044,21 @@ def api_punch_staff_update(sid):
             row = conn.execute("""
                 UPDATE punch_staff
                 SET name=%s,username=%s,password_hash=%s,role=%s,active=%s,employee_code=%s,
+                    department=%s,hire_date=%s,birth_date=%s,
                     bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
             """, (name, username, _hash_pw(password), role, active, employee_code,
+                  department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
         else:
             row = conn.execute("""
                 UPDATE punch_staff
                 SET name=%s,username=%s,role=%s,active=%s,employee_code=%s,
+                    department=%s,hire_date=%s,birth_date=%s,
                     bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
             """, (name, username, role, active, employee_code,
+                  department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 
@@ -1488,9 +1517,17 @@ def _handle_line_punch_event(event, cfg):
                 locs = conn.execute("SELECT * FROM punch_locations WHERE active=TRUE").fetchall()
             gps_required = pcfg['gps_required'] if pcfg else False
             if gps_required and locs:
-                _send_line_punch(user_id,
-                    f'請傳送您的位置來完成{PUNCH_LABEL[punch_type]}\n'
-                    '點下方「傳送位置」按鈕即可打卡')
+                from linebot.models import QuickReply, QuickReplyButton, LocationAction
+                cfg_lp = get_line_punch_config()
+                if cfg_lp and cfg_lp.get('enabled') and cfg_lp.get('channel_access_token'):
+                    qr = QuickReply(items=[QuickReplyButton(action=LocationAction(label='📍 傳送位置'))])
+                    msg = TextSendMessage(
+                        text=f'請傳送您的位置來完成{PUNCH_LABEL[punch_type]}\n點下方「傳送位置」按鈕即可打卡',
+                        quick_reply=qr)
+                    try:
+                        LineBotApi(cfg_lp['channel_access_token']).push_message(user_id, msg)
+                    except Exception as _e:
+                        print(f"[LINE PUNCH] location qr error: {_e}")
                 _pending_line_punches[user_id] = punch_type
             else:
                 _do_line_punch(staff, user_id, None, None, punch_type, PUNCH_LABEL)
@@ -9233,17 +9270,32 @@ def _line_submit_leave(staff, user_id, text):
     parts = text.strip().split()
     # parts[0] = '請假'
 
-    # Step 1: only "請假" → Quick Reply with leave types
+    # Step 1: only "請假" → Quick Reply with leave types + remaining balance
     if len(parts) == 1:
+        year = _dlv.today().year
         with get_db() as conn:
             types = conn.execute(
-                "SELECT name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
+                "SELECT id, name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
             ).fetchall()
+            balances = {
+                r['leave_type_id']: (float(r['total_days'] or 0) - float(r['used_days'] or 0))
+                for r in conn.execute("""
+                    SELECT leave_type_id, total_days, used_days FROM leave_balances
+                    WHERE staff_id=%s AND year=%s
+                """, (staff['id'], year)).fetchall()
+            }
         if not types:
             _send_line_punch(user_id, '目前無可用假別，請聯絡管理員。')
             return
-        items = [{'label': r['name'], 'text': f'請假 {r["name"]}'} for r in types[:13]]
-        _send_line_with_quick_reply(user_id, '🌿 請假申請\n\n請選擇假別：', items)
+        lines = ['🌿 請假申請\n\n可用假別（剩餘天數）：']
+        items = []
+        for r in types:
+            rem = balances.get(r['id'])
+            rem_str = f' {rem:.1f}天' if rem is not None else ''
+            lines.append(f'• {r["name"]}{rem_str}')
+            items.append({'label': f'{r["name"]}{rem_str}', 'text': f'請假 {r["name"]}'})
+        lines.append('\n請點下方按鈕選擇假別：')
+        _send_line_with_quick_reply(user_id, '\n'.join(lines), items[:13])
         return
 
     # Step 2: "請假 假別" (no date) → Quick Reply with date options
@@ -9260,17 +9312,49 @@ def _line_submit_leave(staff, user_id, text):
             if len(date_items) == 6:
                 break
         _send_line_with_quick_reply(user_id,
-            f'🌿 請假 · {leave_type_name}\n\n請選擇日期，或手動輸入：\n'
-            f'請假 {leave_type_name} YYYY-MM-DD',
+            f'🌿 請假 · {leave_type_name}\n\n請選擇日期，或手動輸入多天：\n'
+            f'請假 {leave_type_name} 開始日 結束日',
             date_items)
+        return
+
+    # Step 2.5: "請假 假別 DATE" (one date, no period) → Quick Reply: 全天/上午半天/下午半天
+    if len(parts) == 3 and _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', parts[2]):
+        leave_type_name = parts[1]
+        date_str = parts[2]
+        items_period = [
+            {'label': '全天',     'text': f'請假 {leave_type_name} {date_str} 全天'},
+            {'label': '上午半天', 'text': f'請假 {leave_type_name} {date_str} 上午'},
+            {'label': '下午半天', 'text': f'請假 {leave_type_name} {date_str} 下午'},
+        ]
+        _send_line_with_quick_reply(user_id,
+            f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇時段：',
+            items_period)
         return
 
     leave_type_name = parts[1]
     date_str1 = parts[2]
-    date_str2 = parts[3] if len(parts) > 3 and _re_lv.match(r'\d{4}-\d{2}-\d{2}', parts[3]) else date_str1
-    reason = ' '.join(parts[4:]) if len(parts) > 4 else '（LINE 請假）'
-    if date_str2 == date_str1 and len(parts) > 3 and not _re_lv.match(r'\d{4}-\d{2}-\d{2}', parts[3]):
-        reason = ' '.join(parts[3:])
+
+    # Detect period token (全天/上午/下午) or second date
+    start_half = False; end_half = False
+    period_token = None
+    if len(parts) > 3:
+        tok = parts[3].strip()
+        if tok in ('全天', '上午', '下午'):
+            period_token = tok
+            date_str2 = date_str1
+        elif _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', tok):
+            date_str2 = tok
+        else:
+            date_str2 = date_str1
+    else:
+        date_str2 = date_str1
+
+    if period_token == '上午':
+        start_half = True; end_half = True
+    elif period_token == '下午':
+        start_half = False; end_half = True
+
+    reason = '（LINE 請假）'
 
     # Validate dates
     try:
@@ -9305,11 +9389,12 @@ def _line_submit_leave(staff, user_id, text):
             WHERE staff_id=%s AND leave_type_id=%s AND year=%s
         """, (staff['id'], lt['id'], int(year))).fetchone()
 
-        # Calculate requested days (exclude Sunday)
-        from datetime import timedelta as _tdlv
+        # Calculate requested days (exclude Sunday); half day = 0.5
         s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
-        days = sum(1 for i in range((e-s).days+1)
-                   if (_dlv.fromisoformat(date_str1) + __import__('datetime').timedelta(days=i)).weekday() != 6)
+        days = sum(1 for i in range((e - s).days + 1)
+                   if (s + _tdlv(days=i)).weekday() != 6)
+        if start_half or end_half:
+            days = max(0.5, days - 0.5)
 
         remain = None
         if bal:
@@ -9323,18 +9408,21 @@ def _line_submit_leave(staff, user_id, text):
         # Create leave request
         row = conn.execute("""
             INSERT INTO leave_requests
-              (staff_id, leave_type_id, start_date, end_date, days,
-               reason, status, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,'pending',NOW()) RETURNING id
-        """, (staff['id'], lt['id'], date_str1, date_str2, days, reason or '（LINE 請假）')).fetchone()
+              (staff_id, leave_type_id, start_date, end_date, total_days,
+               start_half, end_half, reason, status, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',NOW()) RETURNING id
+        """, (staff['id'], lt['id'], date_str1, date_str2, days,
+              start_half, end_half, reason)).fetchone()
 
+    period_label = '（上午半天）' if (start_half and end_half and date_str1 == date_str2) else \
+                   '（下午半天）' if (end_half and not start_half and date_str1 == date_str2) else ''
     bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
     _send_line_punch(user_id,
         f'✅ 請假申請已送出\n\n'
         f'假別：{lt["name"]} {bal_str}\n'
-        f'日期：{date_str1}' + (f' ～ {date_str2}' if date_str2 != date_str1 else '') + '\n'
-        f'天數：{days} 天\n'
-        f'原因：{reason}\n\n'
+        f'日期：{date_str1}' + (f' ～ {date_str2}' if date_str2 != date_str1 else '') +
+        f'{period_label}\n'
+        f'天數：{days} 天\n\n'
         f'申請號：#{row["id"]}，等待管理員審核。')
 
 
@@ -9494,60 +9582,83 @@ def _line_overtime_start(staff, user_id):
 
 def _line_submit_overtime(staff, user_id, text):
     """
-    LINE 加班申請。格式：申請加班 [YYYY-MM-DD] [時數] [原因]
-    範例：申請加班 2026-04-05 3 業績衝刺
+    LINE 加班申請流程（幾點到幾點）：
+      申請加班 DATE           → Quick Reply 選開始時間
+      申請加班 DATE HH:MM     → Quick Reply 選結束時間
+      申請加班 DATE HH:MM HH:MM → 送出申請
     """
     import re as _re_ot
-    from datetime import date as _dot
+    from datetime import date as _dot, datetime as _dtt
     parts = text.strip().split(None, 3)
 
-    # Only date provided → Quick Reply with hours options
-    if len(parts) == 2:
-        date_str = parts[1]
-        try:
-            _dot.fromisoformat(date_str)
-        except ValueError:
-            _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dot.today().isoformat()}')
-            return
-        items = [
-            {'label': f'{h} 小時', 'text': f'申請加班 {date_str} {h}'}
-            for h in ['1', '1.5', '2', '2.5', '3', '4', '5', '6']
-        ]
-        _send_line_with_quick_reply(user_id,
-            f'⏰ 加班日期：{date_str}\n\n請選擇加班時數：', items)
-        return
-
-    if len(parts) < 3:
+    if len(parts) < 2:
         _line_overtime_start(staff, user_id)
         return
+
     date_str = parts[1]
     try:
         _dot.fromisoformat(date_str)
     except ValueError:
         _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dot.today().isoformat()}')
         return
+
+    # Step 2: date only → select start time
+    if len(parts) == 2:
+        start_options = ['08:00','09:00','17:00','18:00','19:00','20:00','21:00','22:00']
+        items = [{'label': t, 'text': f'申請加班 {date_str} {t}'} for t in start_options]
+        _send_line_with_quick_reply(user_id,
+            f'⏰ 加班申請 · {date_str}\n\n請選擇開始時間：', items)
+        return
+
+    start_str = parts[2]
+    if not _re_ot.match(r'^\d{2}:\d{2}$', start_str):
+        _send_line_punch(user_id, '時間格式錯誤，請使用 HH:MM，例：18:00')
+        return
+
+    # Step 3: date + start time → select end time
+    if len(parts) == 3:
+        sh, sm = map(int, start_str.split(':'))
+        end_options = []
+        for delta_h in [1, 1.5, 2, 2.5, 3, 4, 5, 6]:
+            total_m = sh * 60 + sm + int(delta_h * 60)
+            eh, em = (total_m // 60) % 24, total_m % 60
+            end_options.append(f'{eh:02d}:{em:02d}')
+        items = [{'label': f'至 {t}（+{d}h）', 'text': f'申請加班 {date_str} {start_str} {t}'}
+                 for t, d in zip(end_options, [1, 1.5, 2, 2.5, 3, 4, 5, 6])]
+        _send_line_with_quick_reply(user_id,
+            f'⏰ 加班申請 · {date_str} {start_str} 開始\n\n請選擇結束時間：', items)
+        return
+
+    # Step 4: date + start + end → submit
+    end_str = parts[3].strip().split()[0]  # take only first token (HH:MM)
+    if not _re_ot.match(r'^\d{2}:\d{2}$', end_str):
+        _send_line_punch(user_id, '時間格式錯誤，請使用 HH:MM，例：20:00')
+        return
+
     try:
-        hours = float(parts[2])
+        sh, sm = map(int, start_str.split(':'))
+        eh, em = map(int, end_str.split(':'))
+        hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60
+        if hours <= 0:
+            hours += 24  # crosses midnight
         if hours <= 0 or hours > 24:
             raise ValueError
     except ValueError:
-        _send_line_punch(user_id, '加班時數需為 0.5～24 之間的數字')
+        _send_line_punch(user_id, '時間計算錯誤，請重新選擇。')
         return
-    reason = parts[3].strip() if len(parts) > 3 else '（LINE 加班申請）'
 
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO overtime_requests
               (staff_id, request_date, start_time, end_time, ot_hours, reason, status)
-            VALUES (%s, %s, NULL, NULL, %s, %s, 'pending')
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending')
             RETURNING id
-        """, (staff['id'], date_str, hours, reason)).fetchone()
+        """, (staff['id'], date_str, start_str, end_str, round(hours, 2), '（LINE 加班申請）')).fetchone()
 
     _send_line_punch(user_id,
         f'✅ 加班申請已送出\n\n'
         f'日期：{date_str}\n'
-        f'時數：{hours} 小時\n'
-        f'原因：{reason}\n'
+        f'時段：{start_str} ～ {end_str}（{hours:.1f} 小時）\n'
         f'申請編號：#{row["id"]}\n\n'
         '請等候管理員審核，審核結果將通知您。')
 
