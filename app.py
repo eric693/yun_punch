@@ -267,6 +267,8 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate2 NUMERIC(4,2) DEFAULT 1.67",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate3 NUMERIC(4,2) DEFAULT 2.0",
         "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS document_id INT REFERENCES finance_documents(id) ON DELETE SET NULL",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS start_time TEXT DEFAULT ''",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS end_time TEXT DEFAULT ''",
         "ALTER TABLE finance_documents ADD COLUMN IF NOT EXISTS image_data TEXT",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_type TEXT DEFAULT 'monthly'",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12,2) DEFAULT 0",
@@ -9368,13 +9370,20 @@ def _line_query_salary(staff, user_id):
 def _line_submit_leave(staff, user_id, text):
     """
     解析並建立請假申請。
-    格式：請假 [假別] [開始日期] [結束日期(選填)] [原因(選填)]
-    範例：請假 特休 2026-04-01
-         請假 事假 2026-04-01 2026-04-02 家庭事務
+    格式：
+      請假                                → Quick Reply 選假別
+      請假 假別                            → Quick Reply 選日期
+      請假 假別 DATE                       → Quick Reply 選時段
+      請假 假別 DATE 全天/上午/下午          → 送出
+      請假 假別 DATE HH:MM                 → Quick Reply 選結束時間
+      請假 假別 DATE HH:MM HH:MM           → 送出（指定時間）
+      請假 假別 DATE1 DATE2               → 送出（多天）
     """
     import re as _re_lv
     from datetime import date as _dlv, timedelta as _tdlv
     WDAY_LV = ['一', '二', '三', '四', '五', '六', '日']
+    TIME_PAT = _re_lv.compile(r'^\d{2}:\d{2}$')
+    DATE_PAT = _re_lv.compile(r'^\d{4}-\d{2}-\d{2}$')
     parts = text.strip().split()
     # parts[0] = '請假'
 
@@ -9425,23 +9434,119 @@ def _line_submit_leave(staff, user_id, text):
             date_items)
         return
 
-    # Step 2.5: "請假 假別 DATE" (one date, no period) → Quick Reply: 全天/上午半天/下午半天
-    if len(parts) == 3 and _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', parts[2]):
+    # Step 2.5: "請假 假別 DATE" → Quick Reply: 全天/上午半天/下午半天/指定時間
+    if len(parts) == 3 and DATE_PAT.match(parts[2]):
         leave_type_name = parts[1]
         date_str = parts[2]
         items_period = [
             {'label': '全天',     'text': f'請假 {leave_type_name} {date_str} 全天'},
             {'label': '上午半天', 'text': f'請假 {leave_type_name} {date_str} 上午'},
             {'label': '下午半天', 'text': f'請假 {leave_type_name} {date_str} 下午'},
+            {'label': '指定時間', 'text': f'請假 {leave_type_name} {date_str} 指定時間'},
         ]
         _send_line_with_quick_reply(user_id,
             f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇時段：',
             items_period)
         return
 
+    # Step 2.6: "請假 假別 DATE 指定時間" → Quick Reply: 選開始時間
+    if len(parts) == 4 and DATE_PAT.match(parts[2]) and parts[3] == '指定時間':
+        leave_type_name = parts[1]
+        date_str = parts[2]
+        start_opts = ['07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00']
+        items = [{'label': t, 'text': f'請假 {leave_type_name} {date_str} {t}'} for t in start_opts]
+        _send_line_with_quick_reply(user_id,
+            f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇開始時間：', items)
+        return
+
+    # Step 2.7: "請假 假別 DATE HH:MM" → Quick Reply: 選結束時間
+    if len(parts) == 4 and DATE_PAT.match(parts[2]) and TIME_PAT.match(parts[3]):
+        leave_type_name = parts[1]
+        date_str = parts[2]
+        start_str = parts[3]
+        sh, sm = map(int, start_str.split(':'))
+        end_opts = []
+        for delta_h in [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8]:
+            total_m = sh * 60 + sm + int(delta_h * 60)
+            if total_m > 23 * 60 + 59:
+                break
+            eh, em = total_m // 60, total_m % 60
+            end_opts.append((f'{eh:02d}:{em:02d}', delta_h))
+        items = [{'label': f'至 {t}（{d:.1g}h）', 'text': f'請假 {leave_type_name} {date_str} {start_str} {t}'}
+                 for t, d in end_opts[:13]]
+        _send_line_with_quick_reply(user_id,
+            f'🌿 請假 · {leave_type_name}\n日期：{date_str}　開始：{start_str}\n\n請選擇結束時間：', items)
+        return
+
     leave_type_name = parts[1]
     date_str1 = parts[2]
 
+    # --- Time-based leave: 請假 假別 DATE HH:MM HH:MM ---
+    start_time_val = ''; end_time_val = ''
+    if len(parts) >= 5 and DATE_PAT.match(date_str1) and TIME_PAT.match(parts[3]) and TIME_PAT.match(parts[4]):
+        start_str = parts[3]; end_str = parts[4]
+        try:
+            sh, sm = map(int, start_str.split(':'))
+            eh, em = map(int, end_str.split(':'))
+            hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60
+            if hours <= 0:
+                _send_line_punch(user_id, '結束時間必須晚於開始時間，請重新選擇。')
+                return
+        except ValueError:
+            _send_line_punch(user_id, '時間格式錯誤，請使用 HH:MM。')
+            return
+        # 每8小時 = 1天，四捨五入至0.5天
+        days = max(0.5, round(hours / 8 * 2) / 2)
+        start_time_val = start_str; end_time_val = end_str
+        date_str2 = date_str1
+        start_half = False; end_half = False
+        reason = '（LINE 請假）'
+
+        with get_db() as conn:
+            lt = conn.execute(
+                "SELECT * FROM leave_types WHERE active=TRUE AND name=%s", (leave_type_name,)
+            ).fetchone()
+            if not lt:
+                lt = conn.execute(
+                    "SELECT * FROM leave_types WHERE active=TRUE AND name ILIKE %s LIMIT 1",
+                    (f'%{leave_type_name}%',)
+                ).fetchone()
+            if not lt:
+                avail = conn.execute(
+                    "SELECT name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
+                ).fetchall()
+                _send_line_punch(user_id, f'找不到假別「{leave_type_name}」\n可用：{"、".join(r["name"] for r in avail)}')
+                return
+            year = date_str1[:4]
+            bal = conn.execute("""
+                SELECT total_days, used_days FROM leave_balances
+                WHERE staff_id=%s AND leave_type_id=%s AND year=%s
+            """, (staff['id'], lt['id'], int(year))).fetchone()
+            remain = None
+            if bal:
+                remain = float(bal['total_days'] or 0) - float(bal['used_days'] or 0)
+                if remain < days:
+                    _send_line_punch(user_id,
+                        f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天，申請 {days} 天')
+                    return
+            row = conn.execute("""
+                INSERT INTO leave_requests
+                  (staff_id, leave_type_id, start_date, end_date, total_days,
+                   start_half, end_half, reason, status, start_time, end_time, created_at)
+                VALUES (%s,%s,%s,%s,%s,FALSE,FALSE,%s,'pending',%s,%s,NOW()) RETURNING id
+            """, (staff['id'], lt['id'], date_str1, date_str1, days,
+                  reason, start_time_val, end_time_val)).fetchone()
+        bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
+        _send_line_punch(user_id,
+            f'✅ 請假申請已送出\n\n'
+            f'假別：{lt["name"]} {bal_str}\n'
+            f'日期：{date_str1}\n'
+            f'時段：{start_str} ～ {end_str}（{hours:.1f} 小時）\n'
+            f'天數：{days} 天\n\n'
+            f'申請號：#{row["id"]}，等待管理員審核。')
+        return
+
+    # --- Day-based leave (全天 / 上午 / 下午 / multi-day) ---
     # Detect period token (全天/上午/下午) or second date
     start_half = False; end_half = False
     period_token = None
@@ -9450,7 +9555,7 @@ def _line_submit_leave(staff, user_id, text):
         if tok in ('全天', '上午', '下午'):
             period_token = tok
             date_str2 = date_str1
-        elif _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', tok):
+        elif DATE_PAT.match(tok):
             date_str2 = tok
         else:
             date_str2 = date_str1
@@ -9517,8 +9622,8 @@ def _line_submit_leave(staff, user_id, text):
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, total_days,
-               start_half, end_half, reason, status, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',NOW()) RETURNING id
+               start_half, end_half, reason, status, start_time, end_time, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending','','',NOW()) RETURNING id
         """, (staff['id'], lt['id'], date_str1, date_str2, days,
               start_half, end_half, reason)).fetchone()
 
