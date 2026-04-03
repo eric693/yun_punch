@@ -1149,13 +1149,18 @@ def api_punch_record_manual():
 @login_required
 def api_punch_record_update(rid):
     b = request.get_json(force=True)
+    punch_type = b.get('punch_type')
+    if punch_type not in ('in', 'out', 'break_out', 'break_in'):
+        return jsonify({'error': '無效的打卡類型'}), 400
     punched_at_parsed = _parse_tw_datetime(b.get('punched_at'))
+    if not punched_at_parsed:
+        return jsonify({'error': '打卡時間格式錯誤'}), 400
     with get_db() as conn:
         row = conn.execute("""
             UPDATE punch_records
             SET punch_type=%s, punched_at=%s, note=%s, is_manual=TRUE, manual_by=%s
             WHERE id=%s RETURNING *
-        """, (b.get('punch_type'), punched_at_parsed,
+        """, (punch_type, punched_at_parsed,
               b.get('note', ''), b.get('manual_by', ''), rid)).fetchone()
     return jsonify(punch_record_row(row)) if row else ('', 404)
 
@@ -1592,16 +1597,35 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
     else:
         with get_db() as conn:
             last = conn.execute("""
-                SELECT punch_type FROM punch_records
+                SELECT punch_type, punched_at FROM punch_records
                 WHERE staff_id=%s
                   AND (punched_at AT TIME ZONE 'Asia/Taipei')::date
                     = (NOW() AT TIME ZONE 'Asia/Taipei')::date
                 ORDER BY punched_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
-        if not last:                               punch_type = 'in'
-        elif last['punch_type'] == 'in':           punch_type = 'out'
-        elif last['punch_type'] == 'break_out':    punch_type = 'break_in'
-        else:                                      punch_type = 'in'
+        if not last:
+            punch_type = 'in'
+        elif last['punch_type'] == 'in':
+            punch_type = 'out'
+        elif last['punch_type'] == 'break_out':
+            punch_type = 'break_in'
+        else:
+            # 上次為 out 或 break_in → 預期下次 in
+            # 若剛打卡下班不到 10 分鐘，先確認避免誤操作
+            if last['punch_type'] == 'out' and last.get('punched_at'):
+                last_time = last['punched_at']
+                now_tw = _dt3.now(TW)
+                if not last_time.tzinfo:
+                    last_time = last_time.replace(tzinfo=TW)
+                diff_min = (now_tw - last_time).total_seconds() / 60
+                if diff_min < 10:
+                    last_str = last_time.strftime('%H:%M')
+                    _send_line_with_quick_reply(user_id,
+                        f'⚠️ 您剛於 {last_str} 打卡下班（{diff_min:.0f} 分鐘前）\n\n確定要打卡上班嗎？',
+                        [{'label': '✅ 確認上班打卡', 'text': '上班打卡'},
+                         {'label': '❌ 取消',        'text': '狀態'}])
+                    return
+            punch_type = 'in'
 
     label = PUNCH_LABEL.get(punch_type, punch_type)
 
@@ -2300,11 +2324,13 @@ def api_shift_assignment_create():
             for sid in staff_ids:
                 months = list({d[:7] for d in dates})
                 for month in months:
-                    row = conn.execute("""
+                    # 同時擋「已核准」和「待審核」的排休申請，避免指派衝突
+                    rows_sr = conn.execute("""
                         SELECT dates FROM schedule_requests
-                        WHERE staff_id=%s AND month=%s AND status='approved'
-                    """, (sid, month)).fetchone()
-                    if row:
+                        WHERE staff_id=%s AND month=%s
+                          AND status IN ('approved', 'pending', 'modified_pending')
+                    """, (sid, month)).fetchall()
+                    for row in rows_sr:
                         approved_dates = row['dates'] or []
                         if isinstance(approved_dates, str):
                             try: approved_dates = _json.loads(approved_dates)
@@ -2335,7 +2361,7 @@ def api_shift_assignment_create():
 
     if blocked and created == 0:
         return jsonify({
-            'error': '以下日期員工已有核准的排休，無法指派班別：' +
+            'error': '以下日期員工已有排休申請（核准或待審），無法指派班別：' +
                      '、'.join([f'{x["staff_name"]} {x["date"]}' for x in blocked]),
             'blocked': blocked
         }), 422
@@ -3288,9 +3314,18 @@ def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=Fa
     cur  = s
     while cur <= e:
         if cur.weekday() != 6:  # exclude Sunday (勞基法最低標準)
-            if cur == s and start_half: days += 0.5
-            elif cur == e and end_half: days += 0.5
-            else: days += 1.0
+            if cur == s and cur == e:
+                # 單日：兩個 half 旗標都打表示上午半天（0.5天）；只有 end_half 表示下午半天（0.5天）
+                if start_half or end_half:
+                    days += 0.5
+                else:
+                    days += 1.0
+            elif cur == s and start_half:
+                days += 0.5
+            elif cur == e and end_half:
+                days += 0.5
+            else:
+                days += 1.0
         cur += _tdd(days=1)
     return days
 
@@ -3812,17 +3847,69 @@ def salary_record_row(row):
     return d
 
 def _eval_formula(formula, base_salary, insured_salary, service_years, extra_vars=None):
-    """安全計算薪資公式"""
+    """安全計算薪資公式（使用 ast 解析，禁止任意程式碼執行）"""
+    import ast as _ast
     if not formula: return 0.0
+    ctx = {
+        'base_salary':    float(base_salary or 0),
+        'insured_salary': float(insured_salary or 0),
+        'service_years':  float(service_years or 0),
+    }
+    if extra_vars:
+        ctx.update({k: float(v or 0) for k, v in extra_vars.items()})
+
+    def _safe_eval(node):
+        if isinstance(node, _ast.Expression):
+            return _safe_eval(node.body)
+        elif isinstance(node, _ast.Constant):
+            return float(node.value)
+        elif isinstance(node, _ast.Num):          # Python < 3.8 相容
+            return float(node.n)
+        elif isinstance(node, _ast.Name):
+            if node.id not in ctx:
+                raise ValueError(f'未知變數: {node.id}')
+            return float(ctx[node.id])
+        elif isinstance(node, _ast.BinOp):
+            l, r = _safe_eval(node.left), _safe_eval(node.right)
+            op = node.op
+            if isinstance(op, _ast.Add):      return l + r
+            if isinstance(op, _ast.Sub):      return l - r
+            if isinstance(op, _ast.Mult):     return l * r
+            if isinstance(op, _ast.Div):      return l / r if r != 0 else 0.0
+            if isinstance(op, _ast.FloorDiv): return float(int(l // r)) if r != 0 else 0.0
+            if isinstance(op, _ast.Mod):      return l % r if r != 0 else 0.0
+            if isinstance(op, _ast.Pow):      return l ** r
+            raise ValueError(f'不支援的運算子: {type(op).__name__}')
+        elif isinstance(node, _ast.UnaryOp):
+            v = _safe_eval(node.operand)
+            if isinstance(node.op, _ast.USub): return -v
+            if isinstance(node.op, _ast.UAdd): return v
+            raise ValueError(f'不支援的單元運算子: {type(node.op).__name__}')
+        elif isinstance(node, _ast.IfExp):
+            return _safe_eval(node.body) if _safe_eval(node.test) else _safe_eval(node.orelse)
+        elif isinstance(node, _ast.Compare):
+            left = _safe_eval(node.left)
+            for op, comp in zip(node.ops, node.comparators):
+                right = _safe_eval(comp)
+                if isinstance(op, _ast.Eq):    ok = left == right
+                elif isinstance(op, _ast.NotEq): ok = left != right
+                elif isinstance(op, _ast.Lt):  ok = left < right
+                elif isinstance(op, _ast.LtE): ok = left <= right
+                elif isinstance(op, _ast.Gt):  ok = left > right
+                elif isinstance(op, _ast.GtE): ok = left >= right
+                else: raise ValueError(f'不支援的比較運算子')
+                if not ok: return 0.0
+                left = right
+            return 1.0
+        elif isinstance(node, _ast.BoolOp):
+            vals = [_safe_eval(v) for v in node.values]
+            if isinstance(node.op, _ast.And): return float(all(vals))
+            if isinstance(node.op, _ast.Or):  return float(any(vals))
+        raise ValueError(f'不允許的公式語法: {type(node).__name__}')
+
     try:
-        ctx = {
-            'base_salary':    float(base_salary or 0),
-            'insured_salary': float(insured_salary or 0),
-            'service_years':  float(service_years or 0),
-        }
-        if extra_vars:
-            ctx.update({k: float(v or 0) for k, v in extra_vars.items()})
-        result = eval(formula, {"__builtins__": {}}, ctx)
+        tree = _ast.parse(formula.strip(), mode='eval')
+        result = _safe_eval(tree)
         return round(float(result), 2)
     except Exception:
         return 0.0
