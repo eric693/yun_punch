@@ -1699,17 +1699,22 @@ def api_richmenu_create():
     if not cfg or not cfg.get('channel_access_token'):
         return jsonify({'error': '請先設定 Channel Access Token'}), 400
 
-    staff_url = (RENDER_EXTERNAL_URL or request.host_url).rstrip('/') + '/staff'
+    b = request.get_json(force=True) or {}
+    gdrive_url = b.get('gdrive_url', '').strip()
+    btn_texts  = b.get('button_texts') or []
+    defaults   = ['上班', '下班', '休息', '回來']
+    btn_texts  = [(btn_texts[i].strip() if i < len(btn_texts) and btn_texts[i].strip() else defaults[i]) for i in range(4)]
+
     body = {
         "size": {"width": 2500, "height": 1686},
         "selected": True,
         "name": "打卡選單",
         "chatBarText": "打卡",
         "areas": [
-            {"bounds": {"x": 0,    "y": 0,   "width": 1250, "height": 843}, "action": {"type": "message", "text": "上班"}},
-            {"bounds": {"x": 1250, "y": 0,   "width": 1250, "height": 843}, "action": {"type": "message", "text": "下班"}},
-            {"bounds": {"x": 0,    "y": 843, "width": 1250, "height": 843}, "action": {"type": "message", "text": "休息"}},
-            {"bounds": {"x": 1250, "y": 843, "width": 1250, "height": 843}, "action": {"type": "message", "text": "回來"}},
+            {"bounds": {"x": 0,    "y": 0,   "width": 1250, "height": 843}, "action": {"type": "message", "text": btn_texts[0]}},
+            {"bounds": {"x": 1250, "y": 0,   "width": 1250, "height": 843}, "action": {"type": "message", "text": btn_texts[1]}},
+            {"bounds": {"x": 0,    "y": 843, "width": 1250, "height": 843}, "action": {"type": "message", "text": btn_texts[2]}},
+            {"bounds": {"x": 1250, "y": 843, "width": 1250, "height": 843}, "action": {"type": "message", "text": btn_texts[3]}},
         ]
     }
 
@@ -1719,18 +1724,44 @@ def api_richmenu_create():
 
     rich_menu_id = data.get('richMenuId', '')
 
-    # Upload image — try custom first, then auto-generate
+    # Upload image — 1) Google Drive  2) custom local file  3) auto-generate
     png_bytes = None
-    try:
-        import os
-        for _cp in [CUSTOM_RICHMENU_IMAGE_PATH,
-                    CUSTOM_RICHMENU_IMAGE_PATH.replace('.png', '.jpg')]:
-            if os.path.exists(_cp):
-                with open(_cp, 'rb') as f:
-                    png_bytes = f.read()
-                break
-    except Exception:
-        pass
+
+    if gdrive_url:
+        try:
+            import re as _re
+            file_id = None
+            m = _re.search(r'/file/d/([^/?]+)', gdrive_url)
+            if m:
+                file_id = m.group(1)
+            else:
+                m = _re.search(r'[?&]id=([^&]+)', gdrive_url)
+                if m:
+                    file_id = m.group(1)
+            if file_id:
+                dl_url = f'https://drive.google.com/uc?export=download&id={file_id}'
+                req = urllib.request.Request(dl_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    png_bytes = resp.read()
+                # Google Drive may return an HTML warning page for large files
+                if png_bytes and png_bytes[:1] not in (b'\x89', b'\xff', b'\x47', b'BM'):
+                    print(f"[LINE PUNCH] gdrive returned non-image content, ignoring")
+                    png_bytes = None
+        except Exception as e:
+            print(f"[LINE PUNCH] gdrive download error: {e}")
+
+    if not png_bytes:
+        try:
+            import os
+            for _cp in [CUSTOM_RICHMENU_IMAGE_PATH,
+                        CUSTOM_RICHMENU_IMAGE_PATH.replace('.png', '.jpg')]:
+                if os.path.exists(_cp):
+                    with open(_cp, 'rb') as f:
+                        png_bytes = f.read()
+                    break
+        except Exception:
+            pass
+
     if not png_bytes:
         try:
             png_bytes = _make_richmenu_png()

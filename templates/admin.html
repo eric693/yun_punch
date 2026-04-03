@@ -641,6 +641,21 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div>
           <div class="card" style="padding:20px;margin-bottom:14px">
             <div class="card-title" style="padding:0;margin-bottom:12px">圖文選單</div>
+            <div style="margin-bottom:12px">
+              <label class="form-label">Google Drive 圖片網址（選填）</label>
+              <input class="form-input" id="rm-gdrive-url" placeholder="https://drive.google.com/file/d/xxx/view" style="width:100%;font-size:12px">
+              <div style="font-size:11px;color:var(--muted);margin-top:4px">貼上 Google Drive 分享連結，系統自動下載作為選單圖片。留空則使用預設色塊圖。</div>
+            </div>
+            <div style="margin-bottom:12px">
+              <label class="form-label">按鈕文字（點擊後送出的訊息）</label>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">左上</div><input class="form-input" id="rm-btn-0" placeholder="上班" style="width:100%"></div>
+                <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">右上</div><input class="form-input" id="rm-btn-1" placeholder="下班" style="width:100%"></div>
+                <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">左下</div><input class="form-input" id="rm-btn-2" placeholder="休息" style="width:100%"></div>
+                <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">右下</div><input class="form-input" id="rm-btn-3" placeholder="回來" style="width:100%"></div>
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px">留空則使用預設值（上班／下班／休息／回來）</div>
+            </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
               <button class="btn btn-primary btn-sm" onclick="createRichMenu()">建立圖文選單</button>
               <button class="btn btn-outline btn-sm" onclick="loadRichMenus()">查看現有選單</button>
@@ -4162,9 +4177,12 @@ async function unbindLinePunch(id, name) {
 async function createRichMenu() {
   const msg = document.getElementById('rm-msg');
   msg.style.color = 'var(--accent)'; msg.textContent = '建立中，請稍候...';
-  const { ok, data } = await api('/api/line-punch/richmenu/create', apiJSON({}));
+  const gdrive_url = (document.getElementById('rm-gdrive-url')?.value || '').trim();
+  const button_texts = [0,1,2,3].map(i => (document.getElementById(`rm-btn-${i}`)?.value || '').trim());
+  const { ok, data } = await api('/api/line-punch/richmenu/create', apiJSON({ gdrive_url, button_texts }));
   if (!ok) { msg.style.color='var(--red)'; msg.textContent='建立失敗：'+(data.error||''); return; }
-  msg.style.color = 'var(--green)'; msg.textContent = `圖文選單已建立！ID：${data.rich_menu_id}`;
+  const imgNote = data.image_uploaded ? '' : '（圖片上傳失敗，選單仍建立）';
+  msg.style.color = 'var(--green)'; msg.textContent = `圖文選單已建立！ID：${data.rich_menu_id} ${imgNote}`;
   showToast('圖文選單建立成功', 'success'); await loadRichMenus();
 }
 async function loadRichMenus() {
