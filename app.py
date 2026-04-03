@@ -4323,7 +4323,18 @@ def api_salary_generate():
     b     = request.get_json(force=True)
     month = b.get('month', '').strip()
     if not month: return jsonify({'error': '請指定月份'}), 400
+    # 防止同一月份並發產生：用 PostgreSQL advisory lock
+    # lock key = classid 9999 + YYYYMM（如 202504），transaction 結束自動釋放
+    try:
+        _lock_month = int(month.replace('-', ''))  # e.g. '2025-04' → 202504
+    except ValueError:
+        return jsonify({'error': '月份格式錯誤，請使用 YYYY-MM'}), 400
     with get_db() as conn:
+        locked = conn.execute(
+            "SELECT pg_try_advisory_xact_lock(9999, %s) AS ok", (_lock_month,)
+        ).fetchone()
+        if not locked or not locked['ok']:
+            return jsonify({'error': f'{month} 薪資產生已在進行中，請稍後再試'}), 409
         staff_list = conn.execute(
             "SELECT * FROM punch_staff WHERE active=TRUE"
         ).fetchall()
