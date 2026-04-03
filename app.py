@@ -4595,7 +4595,8 @@ def api_salary_staff_list():
             SELECT id, name, username, role, active, employee_code, department,
                    position_title, hire_date, birth_date, base_salary, insured_salary,
                    daily_hours, ot_rate1, ot_rate2, salary_type, hourly_rate,
-                   vacation_quota, salary_notes, salary_item_ids, salary_item_overrides
+                   vacation_quota, salary_notes, salary_item_ids, salary_item_overrides,
+                   national_id, gender, insurance_type, address
             FROM punch_staff ORDER BY name
         """).fetchall()
     result = []
