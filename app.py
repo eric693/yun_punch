@@ -1176,7 +1176,7 @@ def api_punch_record_delete(rid):
 def api_punch_summary():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
-        rows = conn.execute("""
+        rows = [dict(r) for r in conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
                    (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
                    MIN(CASE WHEN pr.punch_type='in'  THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as clock_in,
@@ -1186,11 +1186,32 @@ def api_punch_summary():
             FROM punch_records pr JOIN punch_staff ps ON ps.id=pr.staff_id
             WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
             GROUP BY ps.id, ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
-            ORDER BY (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date DESC, ps.name
-        """, (month,)).fetchall()
+            ORDER BY (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date ASC, ps.name
+        """, (month,)).fetchall()]
+
+    # 跨日班次合併：上班在 day N、下班在 day N+1
+    from datetime import date as _dcm, timedelta as _tdcm
+    _row_map = {(r['staff_id'], str(r['work_date'])): r for r in rows}
+    _skip_keys = set()
+    for r in rows:
+        sid = r['staff_id']
+        ds  = str(r['work_date'])
+        if r['clock_in'] and not r['clock_out']:
+            next_ds = (_dcm.fromisoformat(ds) + _tdcm(days=1)).isoformat()
+            nr = _row_map.get((sid, next_ds))
+            if nr and nr['clock_out'] and not nr['clock_in']:
+                r['clock_out']   = nr['clock_out']
+                r['punch_count'] = r['punch_count'] + nr['punch_count']
+                _skip_keys.add((sid, next_ds))
+    rows = sorted(
+        [r for r in rows if (r['staff_id'], str(r['work_date'])) not in _skip_keys],
+        key=lambda x: (str(x['work_date']), x['staff_name']),
+        reverse=True,
+    )
+
     result = []
     for r in rows:
-        d = dict(r)
+        d = r
         d['work_date']  = d['work_date'].isoformat()  if d['work_date']  else None
         d['clock_in']   = d['clock_in'].isoformat()   if d['clock_in']   else None
         d['clock_out']  = d['clock_out'].isoformat()  if d['clock_out']  else None
@@ -1214,7 +1235,7 @@ def api_attendance_monthly_stats():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
         # 每人每日打卡彙整
-        rows = conn.execute("""
+        rows = [dict(r) for r in conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
                    ps.department, ps.role,
                    (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
@@ -1228,7 +1249,23 @@ def api_attendance_monthly_stats():
             GROUP BY ps.id, ps.name, ps.department, ps.role,
                      (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY ps.name, work_date
-        """, (month,)).fetchall()
+        """, (month,)).fetchall()]
+
+        # 跨日班次合併：day N 有上班無下班 + day N+1 有下班無上班 → 歸入 day N
+        from datetime import date as _dcs, timedelta as _tdcs
+        _stat_map = {(r['staff_id'], str(r['work_date'])): r for r in rows}
+        _stat_skip = set()
+        for r in rows:
+            sid = r['staff_id']
+            ds  = str(r['work_date'])
+            if r['has_in'] and not r['has_out']:
+                next_ds = (_dcs.fromisoformat(ds) + _tdcs(days=1)).isoformat()
+                nr = _stat_map.get((sid, next_ds))
+                if nr and nr['has_out'] and not nr['has_in']:
+                    r['clock_out'] = nr['clock_out']
+                    r['has_out']   = True
+                    _stat_skip.add((sid, next_ds))
+        rows = [r for r in rows if (r['staff_id'], str(r['work_date'])) not in _stat_skip]
 
         # 班別指派（用於遲到判斷）
         shift_rows = conn.execute("""
@@ -1599,8 +1636,7 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
             last = conn.execute("""
                 SELECT punch_type, punched_at FROM punch_records
                 WHERE staff_id=%s
-                  AND (punched_at AT TIME ZONE 'Asia/Taipei')::date
-                    = (NOW() AT TIME ZONE 'Asia/Taipei')::date
+                  AND punched_at >= NOW() - INTERVAL '30 hours'
                 ORDER BY punched_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
         if not last:
@@ -3951,6 +3987,24 @@ def _calc_punch_hours(conn, staff_id, month):
         if ds not in day_map:
             day_map[ds] = []
         day_map[ds].append({'type': r['punch_type'], 'dt': pa_tw})
+
+    # 跨日班次合併：day N 有上班無下班 + day N+1 有下班無上班 → 歸入 day N
+    from datetime import date as _dch, timedelta as _tdch
+    for _d1 in sorted(day_map.keys()):
+        _d2 = (_dch.fromisoformat(_d1) + _tdch(days=1)).isoformat()
+        if _d2 not in day_map:
+            continue
+        _p1, _p2 = day_map[_d1], day_map[_d2]
+        _has_in1  = any(p['type'] == 'in'  for p in _p1)
+        _has_out1 = any(p['type'] == 'out' for p in _p1)
+        _has_in2  = any(p['type'] == 'in'  for p in _p2)
+        _has_out2 = any(p['type'] == 'out' for p in _p2)
+        if _has_in1 and not _has_out1 and _has_out2 and not _has_in2:
+            # 將 day N+1 的下班及休息結束打卡移入 day N
+            day_map[_d1] = _p1 + [p for p in _p2 if p['type'] in ('out', 'break_in')]
+            day_map[_d2] = [p for p in _p2 if p['type'] not in ('out', 'break_in')]
+            if not day_map[_d2]:
+                del day_map[_d2]
 
     total_hours = 0.0
     details     = []
