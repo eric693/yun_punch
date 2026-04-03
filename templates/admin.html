@@ -3104,12 +3104,14 @@ async function reinstateStaff(staffId, name) {
 // 功能5：薪資公式編輯器
 // ══════════════════════════════════════════════════════════════
 const FORMULA_PRESETS = [
-  { label: '勞保費（員工負擔）',  formula: 'insured_salary * 0.105 * 0.2' },
-  { label: '健保費（員工負擔）',  formula: 'insured_salary * 0.0517 * 0.3' },
-  { label: '勞退提撥（雇主6%）', formula: 'insured_salary * 0.06' },
-  { label: '全勤獎金（固定）',    formula: '2000' },
-  { label: '職務加給5%',         formula: 'base_salary * 0.05' },
-  { label: '年資加給',           formula: 'service_years * 500' },
+  { label: '勞保費（員工負擔）',      formula: 'insured_salary * 0.105 * 0.2' },
+  { label: '健保費（員工負擔）',      formula: 'insured_salary * 0.0517 * 0.3' },
+  { label: '勞退提撥（雇主6%）',     formula: 'insured_salary * 0.06' },
+  { label: '全勤獎金（固定）',        formula: '2000' },
+  { label: '職務加給5%',             formula: 'base_salary * 0.05' },
+  { label: '年資加給',               formula: 'service_years * 500' },
+  { label: '午餐費（出勤天數×70）',  formula: 'actual_days * 70' },
+  { label: '全勤扣款（事假1天扣半、2天以上全扣）', formula: '3000 * (0.5 if personal_days == 1 else (1 if personal_days >= 2 else 0))' },
 ];
 
 function openFormulaEditor(itemId, currentFormula) {
@@ -3133,16 +3135,16 @@ function openFormulaEditor(itemId, currentFormula) {
       </div>
       <div class="modal-body">
         <div style="margin-bottom:14px">
-          <label class="form-label">公式 <span style="color:var(--muted);font-size:11px">（可使用：base_salary、insured_salary、service_years）</span></label>
+          <label class="form-label">公式 <span style="color:var(--muted);font-size:11px">（可使用下方所有變數）</span></label>
           <div style="display:flex;gap:8px">
             <input class="form-input" id="fe-formula" value="${escHtml(currentFormula||'')}"
               style="flex:1;font-family:'DM Mono',monospace" oninput="previewFormula()"
-              placeholder="例：insured_salary * 0.105 * 0.2">
+              placeholder="例：actual_days * 70">
             <button class="btn btn-outline btn-sm" onclick="previewFormula()">試算</button>
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
             <label class="form-label">底薪</label>
             <input class="form-input" id="fe-base" type="number" value="30000" oninput="previewFormula()" style="width:100%">
@@ -3153,7 +3155,22 @@ function openFormulaEditor(itemId, currentFormula) {
           </div>
           <div>
             <label class="form-label">年資（年）</label>
-            <input class="form-input" id="fe-years" type="number" value="1" oninput="previewFormula()" style="width:100%">
+            <input class="form-input" id="fe-years" type="number" value="1" step="0.5" oninput="previewFormula()" style="width:100%">
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+          <div>
+            <label class="form-label">出勤天數</label>
+            <input class="form-input" id="fe-actual-days" type="number" value="22" oninput="previewFormula()" style="width:100%">
+          </div>
+          <div>
+            <label class="form-label">事假天數</label>
+            <input class="form-input" id="fe-personal-days" type="number" value="0" oninput="previewFormula()" style="width:100%">
+          </div>
+          <div>
+            <label class="form-label">病假天數</label>
+            <input class="form-input" id="fe-sick-days" type="number" value="0" oninput="previewFormula()" style="width:100%">
           </div>
         </div>
 
@@ -3171,11 +3188,17 @@ function openFormulaEditor(itemId, currentFormula) {
 
         <div style="font-size:11px;color:var(--muted);line-height:1.9;padding:10px;background:#f8fafc;border-radius:6px">
           <strong>可用變數：</strong><br>
+          <code>actual_days</code> — 實際出勤天數（應出勤 − 請假）<br>
+          <code>work_days</code> — 應出勤天數<br>
+          <code>personal_days</code> — 事假天數<br>
+          <code>sick_days</code> — 病假天數<br>
+          <code>leave_days</code> — 請假總天數<br>
+          <code>unpaid_days</code> — 無薪假天數<br>
+          <code>daily_wage</code> — 日薪（底薪÷30）<br>
           <code>base_salary</code> — 員工底薪<br>
           <code>insured_salary</code> — 勞健保投保薪資<br>
           <code>service_years</code> — 年資（小數，例：2.5 年）<br>
-          <strong>支援運算：</strong>+ - * / ( ) 數字<br>
-          <strong>範例：</strong><code>insured_salary * 0.105 * 0.2</code>（勞保費員工負擔）
+          <strong>支援運算：</strong>+ - * / ( ) if else 條件式
         </div>
       </div>
       <div class="modal-footer">
@@ -3192,15 +3215,24 @@ function applyFormulaPreset(formula) {
 }
 
 async function previewFormula() {
-  const formula       = document.getElementById('fe-formula')?.value.trim();
-  const base_salary   = parseFloat(document.getElementById('fe-base')?.value || 30000);
-  const insured_salary= parseFloat(document.getElementById('fe-insured')?.value || 30000);
-  const service_years = parseFloat(document.getElementById('fe-years')?.value || 1);
+  const formula        = document.getElementById('fe-formula')?.value.trim();
+  const base_salary    = parseFloat(document.getElementById('fe-base')?.value || 30000);
+  const insured_salary = parseFloat(document.getElementById('fe-insured')?.value || 30000);
+  const service_years  = parseFloat(document.getElementById('fe-years')?.value || 1);
+  const actual_days    = parseFloat(document.getElementById('fe-actual-days')?.value ?? 22);
+  const personal_days  = parseFloat(document.getElementById('fe-personal-days')?.value ?? 0);
+  const sick_days      = parseFloat(document.getElementById('fe-sick-days')?.value ?? 0);
+  const leave_days     = personal_days + sick_days;
+  const work_days      = actual_days + leave_days;
+  const unpaid_days    = 0;
+  const daily_wage     = Math.round(base_salary / 30 * 100) / 100;
   const el = document.getElementById('fe-preview');
   if (!formula) { el.innerHTML = '<span style="color:var(--muted)">輸入公式後即時顯示計算結果</span>'; return; }
   try {
     const { ok, data } = await api('/api/salary/formula/preview',
-      apiJSON({ formula, base_salary, insured_salary, service_years }));
+      apiJSON({ formula, base_salary, insured_salary, service_years,
+                actual_days, work_days, personal_days, sick_days,
+                leave_days, unpaid_days, daily_wage }));
     if (ok && data.error === null) {
       el.innerHTML = `計算結果：<strong style="color:var(--green);font-size:18px">$${Number(data.result).toLocaleString('zh-TW')}</strong>`;
     } else {

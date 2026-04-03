@@ -3809,15 +3809,18 @@ def salary_record_row(row):
     if d.get('updated_at'):   d['updated_at']   = d['updated_at'].isoformat()
     return d
 
-def _eval_formula(formula, base_salary, insured_salary, service_years):
+def _eval_formula(formula, base_salary, insured_salary, service_years, extra_vars=None):
     """安全計算薪資公式"""
     if not formula: return 0.0
     try:
-        result = eval(formula, {"__builtins__": {}}, {
+        ctx = {
             'base_salary':    float(base_salary or 0),
             'insured_salary': float(insured_salary or 0),
             'service_years':  float(service_years or 0),
-        })
+        }
+        if extra_vars:
+            ctx.update({k: float(v or 0) for k, v in extra_vars.items()})
+        result = eval(formula, {"__builtins__": {}}, ctx)
         return round(float(result), 2)
     except Exception:
         return 0.0
@@ -3976,6 +3979,10 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     leave_days    = sum(float(r['total_days']) for r in leave_rows)
     unpaid_days   = sum(float(r['total_days']) for r in leave_rows if float(r['pay_rate']) == 0)
     half_pay_days = sum(float(r['total_days']) for r in leave_rows if 0 < float(r['pay_rate']) < 1)
+    personal_days = sum(float(r['total_days']) for r in leave_rows
+                        if '事假' in (r['leave_name'] or '') or (r['code'] or '').startswith('personal'))
+    sick_days     = sum(float(r['total_days']) for r in leave_rows
+                        if '病假' in (r['leave_name'] or '') or (r['code'] or '').startswith('sick'))
     actual_days   = total_work_days - leave_days
 
     # ── 日薪 / 時薪（用於請假扣款） ───────────────────────
@@ -3985,6 +3992,17 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     else:
         daily_wage  = base_salary / 30 if base_salary > 0 else 0
         hourly_wage = daily_wage / daily_hours if daily_hours > 0 else 0
+
+    # 公式可用的出勤變數
+    _attendance_vars = {
+        'actual_days':   max(0.0, actual_days),
+        'work_days':     float(total_work_days),
+        'personal_days': personal_days,
+        'sick_days':     sick_days,
+        'leave_days':    leave_days,
+        'unpaid_days':   unpaid_days,
+        'daily_wage':    daily_wage,
+    }
 
     # ── 組裝薪資項目 ────────────────────────────────────────
     items           = []
@@ -4053,7 +4071,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             """).fetchall()
         for it in salary_items_rows:
             calc_amt = _eval_formula(it['formula'] or '', base_salary or insured_salary,
-                                     insured_salary, service_years)
+                                     insured_salary, service_years, _attendance_vars)
             amt, overridden = _apply_override(it['id'], calc_amt)
             note = f'手動設定 ${amt}' if overridden else (it['formula'] or '')
             items.append({
@@ -4080,7 +4098,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             formula  = it['formula'] or ''
             calc_amt = float(it['amount'] or 0)
             if formula:
-                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years)
+                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years, _attendance_vars)
             amt, overridden = _apply_override(it['id'], calc_amt)
             note = f'手動設定 ${amt}' if overridden else formula
             items.append({
@@ -6797,16 +6815,33 @@ def api_staff_terminated_list():
 @require_module('salary')
 def api_formula_preview():
     """即時預覽公式計算結果"""
-    b             = request.get_json(force=True)
-    formula       = b.get('formula', '').strip()
-    base_salary   = float(b.get('base_salary', 30000))
-    insured_salary= float(b.get('insured_salary', 30000))
-    service_years = float(b.get('service_years', 1))
+    b              = request.get_json(force=True)
+    formula        = b.get('formula', '').strip()
+    base_salary    = float(b.get('base_salary', 30000))
+    insured_salary = float(b.get('insured_salary', 30000))
+    service_years  = float(b.get('service_years', 1))
+    work_days      = float(b.get('work_days', 22))
+    actual_days    = float(b.get('actual_days', 22))
+    personal_days  = float(b.get('personal_days', 0))
+    sick_days      = float(b.get('sick_days', 0))
+    leave_days     = float(b.get('leave_days', 0))
+    unpaid_days    = float(b.get('unpaid_days', 0))
+    daily_wage     = float(b.get('daily_wage', round(base_salary / 30, 2)))
+
+    extra_vars = {
+        'actual_days':   actual_days,
+        'work_days':     work_days,
+        'personal_days': personal_days,
+        'sick_days':     sick_days,
+        'leave_days':    leave_days,
+        'unpaid_days':   unpaid_days,
+        'daily_wage':    daily_wage,
+    }
 
     if not formula:
         return jsonify({'result': 0, 'error': None})
     try:
-        result = _eval_formula(formula, base_salary, insured_salary, service_years)
+        result = _eval_formula(formula, base_salary, insured_salary, service_years, extra_vars)
         return jsonify({'result': round(result, 2), 'error': None})
     except Exception as e:
         return jsonify({'result': None, 'error': str(e)})
