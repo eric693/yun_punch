@@ -430,6 +430,76 @@ def _annual_leave_sync_loop():
 threading.Thread(target=_annual_leave_sync_loop, daemon=True).start()
 
 
+# ─── 每月1日自動產生上月薪資 ──────────────────────────────────────────────────
+
+def _run_monthly_salary_auto_generate():
+    """每月1日 00:10（台北時間）自動產生所有在職員工上月薪資（draft）。"""
+    from datetime import date as _d_sal
+    import json as _json_sal
+
+    # 計算上月月份字串，例如今天是 2026-05-01 → 上月為 2026-04
+    today = _d_sal.today()
+    if today.month == 1:
+        last_month = f"{today.year - 1}-12"
+    else:
+        last_month = f"{today.year}-{today.month - 1:02d}"
+
+    print(f"[salary_auto] 開始自動產生 {last_month} 薪資...")
+    try:
+        with get_db() as conn:
+            staff_list = conn.execute(
+                "SELECT * FROM punch_staff WHERE active=TRUE"
+            ).fetchall()
+            generated = 0
+            for staff in staff_list:
+                data = _auto_generate_salary(conn, dict(staff), last_month)
+                items_json = _json_sal.dumps(data['items'], ensure_ascii=False)
+                conn.execute("""
+                    INSERT INTO salary_records
+                      (staff_id, month, base_salary, insured_salary, work_days, actual_days,
+                       leave_days, unpaid_days, ot_pay, allowance_total, deduction_total,
+                       net_pay, items, status, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW())
+                    ON CONFLICT (staff_id, month) DO NOTHING
+                """, (
+                    data['staff_id'], last_month, data['base_salary'], data['insured_salary'],
+                    data['work_days'], data['actual_days'], data['leave_days'], data['unpaid_days'],
+                    data['ot_pay'], data['allowance_total'], data['deduction_total'],
+                    data['net_pay'], items_json,
+                ))
+                generated += 1
+        print(f"[salary_auto] {last_month} 薪資自動產生完成，共 {generated} 筆。")
+    except Exception as e:
+        print(f"[salary_auto] 產生失敗：{e}")
+
+
+def _monthly_salary_auto_loop():
+    import time as _time_sal
+    # 等待 app 完全啟動後再進入迴圈
+    _time_sal.sleep(30)
+    while True:
+        now = _dt.now(TW_TZ)
+        # 只在每月1日執行
+        if now.day == 1:
+            target = _dt(now.year, now.month, 1, 0, 10, tzinfo=TW_TZ)
+            if now >= target:
+                _run_monthly_salary_auto_generate()
+                # 執行完後等待 25 小時，避免同一天重複執行
+                _time_sal.sleep(25 * 3600)
+                continue
+        # 計算下次執行時間：下個月1日 00:10
+        if now.month == 12:
+            next_run = _dt(now.year + 1, 1, 1, 0, 10, tzinfo=TW_TZ)
+        else:
+            next_run = _dt(now.year, now.month + 1, 1, 0, 10, tzinfo=TW_TZ)
+        sleep_secs = (next_run - now).total_seconds()
+        print(f"[salary_auto] 下次執行時間：{next_run.strftime('%Y-%m-%d %H:%M')}（台北時間），約 {sleep_secs/3600:.1f} 小時後")
+        _time_sal.sleep(max(sleep_secs, 60))
+
+
+threading.Thread(target=_monthly_salary_auto_loop, daemon=True).start()
+
+
 # ─── Health ───────────────────────────────────────────────────────────────────
 
 @app.route('/health')
