@@ -3408,7 +3408,7 @@ def _calc_annual_leave_schedule(hire_date_str):
     return result
 
 def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False):
-    """計算請假天數（含半天選項），排除週日"""
+    """計算請假天數（含半天選項），排除週六日"""
     from datetime import date as _date, timedelta as _tdd
     try:
         s = _date.fromisoformat(start_date_str)
@@ -3419,7 +3419,7 @@ def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=Fa
     days = 0.0
     cur  = s
     while cur <= e:
-        if cur.weekday() != 6:  # exclude Sunday (勞基法最低標準)
+        if cur.weekday() < 5:  # exclude Saturday and Sunday
             if cur == s and cur == e:
                 # 單日：兩個 half 旗標都打表示上午半天（0.5天）；只有 end_half 表示下午半天（0.5天）
                 if start_half or end_half:
@@ -4287,7 +4287,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 ORDER BY sort_order, id
             """).fetchall()
         for it in salary_items_rows:
-            calc_amt = _eval_formula(it['formula'] or '', base_salary or insured_salary,
+            calc_amt = _eval_formula(it['formula'] or '', base_salary,
                                      insured_salary, service_years, _attendance_vars)
             amt, overridden = _apply_override(it['id'], calc_amt)
             note = f'手動設定 ${amt}' if overridden else (it['formula'] or '')
@@ -9649,7 +9649,7 @@ def _line_submit_leave(staff, user_id, text):
         date_items = []
         for i in range(7):
             d = today + _tdlv(days=i)
-            if d.weekday() == 6:  # skip Sunday
+            if d.weekday() >= 5:  # skip Saturday and Sunday
                 continue
             label = ('今天 ' if i == 0 else '明天 ' if i == 1 else '') + f'{d.strftime("%m/%d")}({WDAY_LV[d.weekday()]})'
             date_items.append({'label': label, 'text': f'請假 {leave_type_name} {d.isoformat()}'})
@@ -9832,7 +9832,7 @@ def _line_submit_leave(staff, user_id, text):
         # Calculate requested days (exclude Sunday); half day = 0.5
         s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
         days = sum(1 for i in range((e - s).days + 1)
-                   if (s + _tdlv(days=i)).weekday() != 6)
+                   if (s + _tdlv(days=i)).weekday() < 5)
         if start_half or end_half:
             days = max(0.5, days - 0.5)
 
