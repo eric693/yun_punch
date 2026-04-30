@@ -4183,7 +4183,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     # ── 請假資訊 ────────────────────────────────────────────
     leave_rows = conn.execute("""
-        SELECT lr.total_days, lt.pay_rate, lt.code, lt.name as leave_name
+        SELECT lr.total_days, lr.start_time, lt.pay_rate, lt.code, lt.name as leave_name
         FROM leave_requests lr
         JOIN leave_types lt ON lt.id = lr.leave_type_id
         WHERE lr.staff_id=%s AND lr.status='approved'
@@ -4192,11 +4192,15 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     leave_days    = sum(float(r['total_days']) for r in leave_rows)
     unpaid_days   = sum(float(r['total_days']) for r in leave_rows if float(r['pay_rate']) == 0)
     half_pay_days = sum(float(r['total_days']) for r in leave_rows if 0 < float(r['pay_rate']) < 1)
-    personal_days = sum(float(r['total_days']) for r in leave_rows
-                        if '事假' in (r['leave_name'] or '') or (r['code'] or '').startswith('personal'))
-    sick_days     = sum(float(r['total_days']) for r in leave_rows
-                        if '病假' in (r['leave_name'] or '') or (r['code'] or '').startswith('sick'))
     actual_days   = total_work_days - leave_days
+
+    # 全天請假（start_time 為空）才計入全勤判斷，小時請假不影響全勤
+    full_day_rows  = [r for r in leave_rows if not (r['start_time'] or '').strip()]
+    fd_leave_days  = sum(float(r['total_days']) for r in full_day_rows)
+    personal_days  = sum(float(r['total_days']) for r in full_day_rows
+                         if '事假' in (r['leave_name'] or '') or (r['code'] or '').startswith('personal'))
+    sick_days      = sum(float(r['total_days']) for r in full_day_rows
+                         if '病假' in (r['leave_name'] or '') or (r['code'] or '').startswith('sick'))
 
     # ── 日薪 / 時薪（用於請假扣款） ───────────────────────
     if salary_type == 'hourly':
@@ -4206,13 +4210,13 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         daily_wage  = base_salary / 30 if base_salary > 0 else 0
         hourly_wage = daily_wage / daily_hours if daily_hours > 0 else 0
 
-    # 公式可用的出勤變數
+    # 公式可用的出勤變數（leave_days/personal_days/sick_days 只計全天請假，小時請假不影響全勤）
     _attendance_vars = {
         'actual_days':   max(0.0, actual_days),
         'work_days':     float(total_work_days),
         'personal_days': personal_days,
         'sick_days':     sick_days,
-        'leave_days':    leave_days,
+        'leave_days':    fd_leave_days,
         'unpaid_days':   unpaid_days,
         'daily_wage':    daily_wage,
     }
