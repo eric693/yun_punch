@@ -3057,6 +3057,9 @@ def api_ot_review(rid):
             "SELECT name FROM punch_staff WHERE id=%s", (req['staff_id'],)
         ).fetchone()
 
+        ot_month = str(req['request_date'])[:7]
+        _trigger_salary_regen_for_leave(conn, req['staff_id'], ot_month)
+
     result = ot_req_row(row)
     result['staff_name'] = sn['name'] if sn else ''
     # LINE notification
@@ -3407,8 +3410,21 @@ def _calc_annual_leave_schedule(hire_date_str):
 
     return result
 
-def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False):
-    """計算請假天數（含半天選項），排除週六日"""
+def _get_staff_scheduled_dates(conn, staff_id, start_date_str, end_date_str):
+    """取得員工在日期範圍內的排班日集合；無排班記錄則回傳 None（由呼叫方決定備援邏輯）"""
+    rows = conn.execute("""
+        SELECT DISTINCT date FROM shift_assignments
+        WHERE staff_id=%s AND date BETWEEN %s AND %s
+    """, (staff_id, start_date_str, end_date_str)).fetchall()
+    if not rows:
+        return None
+    return {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in rows}
+
+
+def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False,
+                     scheduled_dates=None):
+    """計算請假天數（含半天選項）。
+    有排班時以 scheduled_dates 為準；無排班備援排除週六日。"""
     from datetime import date as _date, timedelta as _tdd
     try:
         s = _date.fromisoformat(start_date_str)
@@ -3419,7 +3435,9 @@ def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=Fa
     days = 0.0
     cur  = s
     while cur <= e:
-        if cur.weekday() < 5:  # exclude Saturday and Sunday
+        is_workday = (cur.isoformat() in scheduled_dates) if scheduled_dates is not None \
+                     else (cur.weekday() < 5)
+        if is_workday:
             if cur == s and cur == e:
                 # 單日：兩個 half 旗標都打表示上午半天（0.5天）；只有 end_half 表示下午半天（0.5天）
                 if start_half or end_half:
@@ -3537,11 +3555,13 @@ def api_leave_request_admin_create():
     if not all([sid, leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
 
-    total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
-    if total_days <= 0:
-        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
-
     with get_db() as conn:
+        sched      = _get_staff_scheduled_dates(conn, sid, start_date, end_date)
+        total_days = _calc_leave_days(start_date, end_date, start_half, end_half,
+                                      scheduled_dates=sched)
+        if total_days <= 0:
+            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
@@ -3574,9 +3594,14 @@ def api_leave_request_review(rid):
                 reviewed_at=NOW(), updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (new_status, reviewed_by, review_note, rid)).fetchone()
-        if action == 'approve':
+        if action == 'approve' and old['status'] != 'approved':
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], float(old['total_days']))
+        elif action == 'reject' and old['status'] == 'approved':
+            # 原本已核准 → 現在駁回，需還原假別額度
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -float(old['total_days']))
+        _trigger_salary_regen_for_leave(conn, old['staff_id'], str(old['start_date'])[:7])
     if row:
         extra = f"{str(old['start_date'])} ~ {str(old['end_date'])} 共 {float(old['total_days'])} 天"
         if review_note: extra += f"\n審核意見：{review_note}"
@@ -3587,8 +3612,43 @@ def api_leave_request_review(rid):
 @require_module('leave')
 def api_leave_request_delete(rid):
     with get_db() as conn:
+        old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
+        if not old: return ('', 404)
         conn.execute("DELETE FROM leave_requests WHERE id=%s", (rid,))
+        if old['status'] == 'approved':
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -float(old['total_days']))
+            _trigger_salary_regen_for_leave(conn, old['staff_id'], str(old['start_date'])[:7])
     return jsonify({'deleted': rid})
+
+def _trigger_salary_regen_for_leave(conn, staff_id, month):
+    """請假/加班狀態異動後，若該月已有薪資草稿則自動重算"""
+    try:
+        existing = conn.execute(
+            "SELECT status FROM salary_records WHERE staff_id=%s AND month=%s",
+            (staff_id, month)
+        ).fetchone()
+        if not existing or existing['status'] == 'confirmed':
+            return
+        staff = conn.execute("SELECT * FROM punch_staff WHERE id=%s", (staff_id,)).fetchone()
+        if not staff:
+            return
+        data = _auto_generate_salary(conn, dict(staff), month)
+        items_json = _json.dumps(data['items'], ensure_ascii=False)
+        conn.execute("""
+            UPDATE salary_records
+            SET base_salary=%s, insured_salary=%s, work_days=%s, actual_days=%s,
+                leave_days=%s, unpaid_days=%s, ot_pay=%s, allowance_total=%s,
+                deduction_total=%s, net_pay=%s, items=%s::jsonb, updated_at=NOW()
+            WHERE staff_id=%s AND month=%s AND status='draft'
+        """, (
+            data['base_salary'], data['insured_salary'], data['work_days'], data['actual_days'],
+            data['leave_days'], data['unpaid_days'], data['ot_pay'], data['allowance_total'],
+            data['deduction_total'], data['net_pay'], items_json,
+            staff_id, month,
+        ))
+    except Exception as _e:
+        print(f"[salary_regen] 自動重算失敗 staff={staff_id} month={month}: {_e}")
 
 def _update_leave_balance(conn, staff_id, leave_type_id, year_str, delta_days):
     year = int(year_str)
@@ -3642,11 +3702,13 @@ def api_leave_submit():
     if not all([leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
 
-    total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
-    if total_days <= 0:
-        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
-
     with get_db() as conn:
+        sched      = _get_staff_scheduled_dates(conn, sid, start_date, end_date)
+        total_days = _calc_leave_days(start_date, end_date, start_half, end_half,
+                                      scheduled_dates=sched)
+        if total_days <= 0:
+            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+
         # Check balance for types with limits
         lt = conn.execute("SELECT * FROM leave_types WHERE id=%s", (leave_type_id,)).fetchone()
         if lt and lt['max_days'] is not None:
@@ -4210,9 +4272,42 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         daily_wage  = base_salary / 30 if base_salary > 0 else 0
         hourly_wage = daily_wage / daily_hours if daily_hours > 0 else 0
 
+    # ── 月薪制：提前計算缺勤天數，讓 _attendance_vars 中 actual_days 正確 ──
+    absent_days      = 0
+    absent_date_list = []
+    if salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
+        _punch_rows_pre = conn.execute("""
+            SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
+            FROM punch_records WHERE staff_id=%s
+              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+        """, (staff['id'], month)).fetchall()
+        _punched_dates_pre = {
+            r['work_date'].isoformat() if hasattr(r['work_date'], 'isoformat') else str(r['work_date'])
+            for r in _punch_rows_pre
+        }
+        _leave_date_rows_pre = conn.execute("""
+            SELECT start_date, end_date FROM leave_requests
+            WHERE staff_id=%s AND status='approved'
+              AND TO_CHAR(start_date,'YYYY-MM')=%s
+        """, (staff['id'], month)).fetchall()
+        _leave_date_set_pre = set()
+        for _lr in _leave_date_rows_pre:
+            _ld = _lr['start_date']
+            _le = _lr['end_date']
+            while _ld <= _le:
+                _leave_date_set_pre.add(_ld.isoformat() if hasattr(_ld, 'isoformat') else str(_ld))
+                _ld += _td5(days=1)
+        absent_date_list = sorted(
+            ds for ds in scheduled_dates
+            if ds not in _punched_dates_pre and ds not in _leave_date_set_pre
+               and _d5.fromisoformat(ds) < _today5
+        )
+        absent_days = len(absent_date_list)
+    actual_days = max(0, actual_days - absent_days)
+
     # 公式可用的出勤變數（leave_days/personal_days/sick_days 只計全天請假，小時請假不影響全勤）
     _attendance_vars = {
-        'actual_days':   max(0.0, actual_days),
+        'actual_days':   float(actual_days),
         'work_days':     float(total_work_days),
         'personal_days': personal_days,
         'sick_days':     sick_days,
@@ -4353,56 +4448,38 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         })
         deduction_total += deduct
 
+    # 半薪假：依各假別的 pay_rate 分組計算，扣款 = daily_wage × 天數 × (1 - pay_rate)
     if half_pay_days > 0 and daily_wage > 0:
-        leave_names = '、'.join(set(
-            r['leave_name'] for r in leave_rows if 0 < float(r['pay_rate']) < 1
-        ))
-        deduct = round(daily_wage * half_pay_days * 0.5, 2)
+        from collections import defaultdict as _dd
+        _hp_groups = _dd(lambda: {'days': 0.0, 'names': set()})
+        for r in leave_rows:
+            pr = float(r['pay_rate'])
+            if 0 < pr < 1:
+                _hp_groups[pr]['days']  += float(r['total_days'])
+                _hp_groups[pr]['names'].add(r['leave_name'])
+        for pr, grp in sorted(_hp_groups.items()):
+            if grp['days'] > 0:
+                deduct_rate = round(1 - pr, 6)
+                deduct = round(daily_wage * grp['days'] * deduct_rate, 2)
+                leave_names = '、'.join(grp['names'])
+                items.append({
+                    'id': f'halfpay_{int(pr*100)}',
+                    'name': f'半薪假扣款（{leave_names}）', 'type': 'deduction',
+                    'amount': deduct, 'formula': '',
+                    'calc_note': f"{grp['days']}天 × 日薪${round(daily_wage, 0)} × {deduct_rate:.0%}",
+                })
+                deduction_total += deduct
+
+    # ── 月薪制：缺勤扣款項目（absent_days 已在 _attendance_vars 前計算完畢） ──
+    if absent_days > 0 and daily_wage > 0:
+        deduct = round(daily_wage * absent_days, 2)
+        sample = '、'.join(absent_date_list[:3]) + ('等' if absent_days > 3 else '')
         items.append({
-            'id': 'halfpay', 'name': f'半薪假扣款（{leave_names}）', 'type': 'deduction',
+            'id': 'absent', 'name': f'缺勤扣款（{absent_days} 天）', 'type': 'deduction',
             'amount': deduct, 'formula': '',
-            'calc_note': f'{half_pay_days}天 × 日薪${round(daily_wage, 0)} × 0.5',
+            'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}（{sample}）',
         })
         deduction_total += deduct
-
-    # ── 月薪制：缺勤扣款（打卡記錄核查） ─────────────────────
-    absent_days = 0
-    if salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
-        punch_rows = conn.execute("""
-            SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
-            FROM punch_records WHERE staff_id=%s
-              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
-        """, (staff['id'], month)).fetchall()
-        punched_dates = {r['work_date'].isoformat() if hasattr(r['work_date'], 'isoformat') else str(r['work_date']) for r in punch_rows}
-        # 已核准請假日期集合
-        leave_date_rows = conn.execute("""
-            SELECT start_date, end_date FROM leave_requests
-            WHERE staff_id=%s AND status='approved'
-              AND TO_CHAR(start_date,'YYYY-MM')=%s
-        """, (staff['id'], month)).fetchall()
-        leave_date_set = set()
-        for _lr in leave_date_rows:
-            _ld = _lr['start_date']
-            _le = _lr['end_date']
-            while _ld <= _le:
-                leave_date_set.add(_ld.isoformat() if hasattr(_ld, 'isoformat') else str(_ld))
-                _ld += _td5(days=1)
-        # 缺勤 = 排班但未打卡且非假日，僅計算過去日期
-        absent_date_list = sorted(
-            ds for ds in scheduled_dates
-            if ds not in punched_dates and ds not in leave_date_set
-               and _d5.fromisoformat(ds) < _today5
-        )
-        absent_days = len(absent_date_list)
-        if absent_days > 0:
-            deduct = round(daily_wage * absent_days, 2)
-            sample = '、'.join(absent_date_list[:3]) + ('等' if absent_days > 3 else '')
-            items.append({
-                'id': 'absent', 'name': f'缺勤扣款（{absent_days} 天）', 'type': 'deduction',
-                'amount': deduct, 'formula': '',
-                'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}（{sample}）',
-            })
-            deduction_total += deduct
 
     net_pay = round(allowance_total - deduction_total, 2)
 
@@ -4416,7 +4493,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'actual_work_hours':  actual_work_hours if salary_type == 'hourly' else 0,
         'insured_salary':     insured_salary,
         'work_days':          total_work_days,
-        'actual_days':        max(0, actual_days - absent_days),
+        'actual_days':        actual_days,
         'leave_days':         leave_days,
         'unpaid_days':        unpaid_days,
         'absent_days':        absent_days,
@@ -9646,10 +9723,14 @@ def _line_submit_leave(staff, user_id, text):
     if len(parts) == 2:
         leave_type_name = parts[1]
         today = _dlv.today()
+        end7  = today + _tdlv(days=13)
+        with get_db() as conn:
+            sched7 = _get_staff_scheduled_dates(conn, staff['id'],
+                                                today.isoformat(), end7.isoformat()) or set()
         date_items = []
-        for i in range(7):
+        for i in range(14):
             d = today + _tdlv(days=i)
-            if d.weekday() >= 5:  # skip Saturday and Sunday
+            if d.weekday() >= 5 and d.isoformat() not in sched7:
                 continue
             label = ('今天 ' if i == 0 else '明天 ' if i == 1 else '') + f'{d.strftime("%m/%d")}({WDAY_LV[d.weekday()]})'
             date_items.append({'label': label, 'text': f'請假 {leave_type_name} {d.isoformat()}'})
@@ -9829,12 +9910,10 @@ def _line_submit_leave(staff, user_id, text):
             WHERE staff_id=%s AND leave_type_id=%s AND year=%s
         """, (staff['id'], lt['id'], int(year))).fetchone()
 
-        # Calculate requested days (exclude Sunday); half day = 0.5
-        s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
-        days = sum(1 for i in range((e - s).days + 1)
-                   if (s + _tdlv(days=i)).weekday() < 5)
-        if start_half or end_half:
-            days = max(0.5, days - 0.5)
+        # Calculate requested days (排班日為準；無排班則排除週六日); half day = 0.5
+        sched_lv = _get_staff_scheduled_dates(conn, staff['id'], date_str1, date_str2)
+        days = _calc_leave_days(date_str1, date_str2, start_half, end_half,
+                                scheduled_dates=sched_lv)
 
         remain = None
         if bal:
