@@ -9615,18 +9615,28 @@ def api_perf_config_update():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _line_query_leave_balance(staff, user_id):
-    """查詢員工本年度假期餘額"""
+    """查詢員工本年度假期餘額（含待審核天數）"""
     from datetime import date as _dlb
     year = _dlb.today().year
     try:
         with get_db() as conn:
             rows = conn.execute("""
-                SELECT lb.total_days, lb.used_days, lt.name AS type_name
+                SELECT lb.total_days, lb.used_days, lt.name AS type_name, lt.id AS type_id
                 FROM leave_balances lb
                 JOIN leave_types lt ON lt.id=lb.leave_type_id
                 WHERE lb.staff_id=%s AND lb.year=%s
                 ORDER BY lt.sort_order
             """, (staff['id'], year)).fetchall()
+            pending_map = {
+                r['leave_type_id']: float(r['pending_days'] or 0)
+                for r in conn.execute("""
+                    SELECT leave_type_id, SUM(total_days) AS pending_days
+                    FROM leave_requests
+                    WHERE staff_id=%s AND status='pending'
+                      AND EXTRACT(YEAR FROM start_date)=%s
+                    GROUP BY leave_type_id
+                """, (staff['id'], year)).fetchall()
+            }
     except Exception as e:
         _send_line_punch(user_id, f'查詢失敗：{e}')
         return
@@ -9635,11 +9645,13 @@ def _line_query_leave_balance(staff, user_id):
         return
     lines = [f'📋 {staff["name"]} {year} 年假期餘額']
     for r in rows:
-        total = float(r['total_days'] or 0)
-        used  = float(r['used_days']  or 0)
-        remain= total - used
-        bar   = '▓' * int(remain) + '░' * max(0, int(total - remain))
-        lines.append(f'\n【{r["type_name"]}】\n  剩餘 {remain:.1f} 天 / 共 {total:.0f} 天\n  {bar}')
+        total   = float(r['total_days'] or 0)
+        used    = float(r['used_days']  or 0)
+        pending = pending_map.get(r['type_id'], 0.0)
+        remain  = total - used
+        bar     = '▓' * int(remain) + '░' * max(0, int(total - remain))
+        pending_str = f'  ⏳ 待審核 {pending:.1f} 天\n' if pending > 0 else ''
+        lines.append(f'\n【{r["type_name"]}】\n  剩餘 {remain:.1f} 天 / 共 {total:.0f} 天\n{pending_str}  {bar}')
     _send_line_punch(user_id, '\n'.join(lines))
 
 
@@ -10198,8 +10210,7 @@ def _line_show_help(staff, user_id):
         '─── 申請 ───\n'
         '📝 請假 [假別] [日期] → 送出請假\n'
         '   範例：請假 特休 2026-04-01\n'
-        '⏰ 申請加班 [日期] [時數] → 加班申請\n'
-        '   範例：申請加班 2026-04-05 3\n'
+        '⏰ 加班 → 選擇日期與時段申請加班\n'
         '🗂️ 假別 → 查看可用假別清單\n\n'
         '─── 其他 ───\n'
         '🔓 解除綁定')
