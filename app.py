@@ -1211,6 +1211,8 @@ def api_punch_record_manual():
             VALUES (%s,%s,%s,%s,TRUE,%s) RETURNING *
         """, (staff_id, punch_type, punched_at_parsed, note, manual_by)).fetchone()
         staff = conn.execute("SELECT name FROM punch_staff WHERE id=%s", (staff_id,)).fetchone()
+        punch_month = str(punched_at_parsed)[:7]
+        _trigger_salary_regen_for_leave(conn, int(staff_id), punch_month)
     d = punch_record_row(row)
     if staff: d['staff_name'] = staff['name']
     return jsonify(d), 201
@@ -1232,13 +1234,21 @@ def api_punch_record_update(rid):
             WHERE id=%s RETURNING *
         """, (punch_type, punched_at_parsed,
               b.get('note', ''), b.get('manual_by', ''), rid)).fetchone()
+        if row:
+            _trigger_salary_regen_for_leave(conn, row['staff_id'],
+                                            str(punched_at_parsed)[:7])
     return jsonify(punch_record_row(row)) if row else ('', 404)
 
 @app.route('/api/punch/records/<int:rid>', methods=['DELETE'])
 @login_required
 def api_punch_record_delete(rid):
     with get_db() as conn:
+        old = conn.execute("SELECT staff_id, punched_at FROM punch_records WHERE id=%s",
+                           (rid,)).fetchone()
         conn.execute("DELETE FROM punch_records WHERE id=%s", (rid,))
+        if old:
+            _trigger_salary_regen_for_leave(conn, old['staff_id'],
+                                            str(old['punched_at'])[:7])
     return jsonify({'deleted': rid})
 
 @app.route('/api/punch/summary', methods=['GET'])
@@ -3077,7 +3087,13 @@ def api_ot_review(rid):
 @login_required
 def api_ot_delete(rid):
     with get_db() as conn:
+        old = conn.execute(
+            "SELECT staff_id, request_date, status FROM overtime_requests WHERE id=%s", (rid,)
+        ).fetchone()
         conn.execute("DELETE FROM overtime_requests WHERE id=%s", (rid,))
+        if old and old['status'] == 'approved':
+            _trigger_salary_regen_for_leave(conn, old['staff_id'],
+                                            str(old['request_date'])[:7])
     return jsonify({'deleted': rid})
 
 
@@ -4641,9 +4657,17 @@ def api_salary_generate():
                    net_pay, items, status, updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW())
                 ON CONFLICT (staff_id, month) DO UPDATE
-                  SET base_salary=%s, insured_salary=%s, work_days=%s, actual_days=%s,
-                      leave_days=%s, unpaid_days=%s, ot_pay=%s, allowance_total=%s,
-                      deduction_total=%s, net_pay=%s, items=%s::jsonb,
+                  SET base_salary=CASE WHEN salary_records.status='confirmed' THEN salary_records.base_salary ELSE %s END,
+                      insured_salary=CASE WHEN salary_records.status='confirmed' THEN salary_records.insured_salary ELSE %s END,
+                      work_days=CASE WHEN salary_records.status='confirmed' THEN salary_records.work_days ELSE %s END,
+                      actual_days=CASE WHEN salary_records.status='confirmed' THEN salary_records.actual_days ELSE %s END,
+                      leave_days=CASE WHEN salary_records.status='confirmed' THEN salary_records.leave_days ELSE %s END,
+                      unpaid_days=CASE WHEN salary_records.status='confirmed' THEN salary_records.unpaid_days ELSE %s END,
+                      ot_pay=CASE WHEN salary_records.status='confirmed' THEN salary_records.ot_pay ELSE %s END,
+                      allowance_total=CASE WHEN salary_records.status='confirmed' THEN salary_records.allowance_total ELSE %s END,
+                      deduction_total=CASE WHEN salary_records.status='confirmed' THEN salary_records.deduction_total ELSE %s END,
+                      net_pay=CASE WHEN salary_records.status='confirmed' THEN salary_records.net_pay ELSE %s END,
+                      items=CASE WHEN salary_records.status='confirmed' THEN salary_records.items ELSE %s::jsonb END,
                       status=CASE WHEN salary_records.status='confirmed' THEN 'confirmed' ELSE 'draft' END,
                       updated_at=NOW()
             """, (
@@ -5607,6 +5631,8 @@ def api_punch_req_review_v2(rid):
                 VALUES (%s,%s,%s,%s,TRUE,%s)
             """, (row['staff_id'], row['punch_type'], row['requested_at'],
                   f'補打卡申請 #{rid}：{row["reason"]}', reviewed_by))
+            punch_month = str(row['requested_at'])[:7]
+            _trigger_salary_regen_for_leave(conn, row['staff_id'], punch_month)
     # LINE notification
     LABEL = {'in':'上班打卡','out':'下班打卡','break_out':'休息開始','break_in':'休息結束'}
     dt_str = row['requested_at'].isoformat()[:16].replace('T',' ')
@@ -6770,6 +6796,8 @@ def api_punch_req_batch():
                         VALUES (%s,%s,%s,%s,TRUE,%s)
                     """, (row['staff_id'], row['punch_type'], row['requested_at'],
                           f'補打卡申請#{rid}', by))
+                    punch_month = str(row['requested_at'])[:7]
+                    _trigger_salary_regen_for_leave(conn, row['staff_id'], punch_month)
                 _notify_review_result(row['staff_id'], '補打卡申請', action,
                                       note and f'批次審核意見：{note}' or '')
                 done += 1
@@ -7071,6 +7099,17 @@ def api_staff_terminate(sid):
               sid)).fetchone()
         if not row:
             return ('', 404)
+        # 清除離職日之後的排班及所有待審申請
+        conn.execute(
+            "DELETE FROM shift_assignments WHERE staff_id=%s AND shift_date > %s",
+            (sid, termination_date))
+        for tbl in ('leave_requests', 'overtime_requests', 'schedule_requests'):
+            try:
+                conn.execute(
+                    f"UPDATE {tbl} SET status='cancelled' WHERE staff_id=%s AND status IN ('pending','modified_pending')",
+                    (sid,))
+            except Exception:
+                pass
 
     return jsonify({
         'ok': True,
@@ -9235,6 +9274,14 @@ def api_expense_review(cid):
                   f"報帳申請 #{cid}：{claim['note'] or ''}",
                   claim['document_id'])).fetchone()
             finance_rid = frec['id']
+        elif action == 'reject' and claim.get('finance_record_id'):
+            # 退回時作廢先前建立的財務記錄
+            try:
+                conn.execute("DELETE FROM finance_records WHERE id=%s",
+                             (claim['finance_record_id'],))
+            except Exception:
+                pass
+            finance_rid = None
 
         row = conn.execute("""
             UPDATE expense_claims SET
@@ -9540,8 +9587,8 @@ def api_perf_adjust_salary(rid):
         if not staff: return ('', 404)
         new_salary = float(staff['base_salary'] or 0) + delta
         conn.execute(
-            "UPDATE punch_staff SET base_salary=%s WHERE id=%s",
-            (new_salary, staff['id'])
+            "UPDATE punch_staff SET base_salary=%s, insured_salary=%s WHERE id=%s",
+            (new_salary, new_salary, staff['id'])
         )
         conn.execute("""
             UPDATE performance_reviews
@@ -10437,6 +10484,13 @@ def mobile_punch():
         return jsonify({'error': '此門市需要 GPS 定位才能打卡'}), 400
 
     with get_db() as conn:
+        recent = conn.execute("""
+            SELECT id FROM punch_records
+            WHERE staff_id=%s AND punch_type=%s
+              AND punched_at >= NOW() - INTERVAL '1 minute'
+        """, (staff_id, punch_type)).fetchone()
+        if recent:
+            return jsonify({'error': '1 分鐘內已有相同打卡記錄，請勿重複送出'}), 429
         conn.execute(
             """INSERT INTO punch_records
                (staff_id, punch_type, note, latitude, longitude, gps_distance, location_name)
@@ -10454,13 +10508,14 @@ def mobile_punch_status():
     if u['role'] != 'employee':
         return jsonify({'error': '僅員工可查詢'}), 403
     staff_id = int(u['sub'])
-    today = date.today().isoformat()
     with get_db() as conn:
         rows = conn.execute(
             """SELECT punch_type, punched_at, note, gps_distance, location_name
                FROM punch_records WHERE staff_id=%s
-               AND punched_at::date = %s::date ORDER BY punched_at""",
-            (staff_id, today)
+               AND (punched_at AT TIME ZONE 'Asia/Taipei')::date =
+                   (NOW() AT TIME ZONE 'Asia/Taipei')::date
+               ORDER BY punched_at""",
+            (staff_id,)
         ).fetchall()
     data = []
     for r in rows:
