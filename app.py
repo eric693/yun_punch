@@ -3413,12 +3413,12 @@ def _calc_annual_leave_schedule(hire_date_str):
 def _get_staff_scheduled_dates(conn, staff_id, start_date_str, end_date_str):
     """取得員工在日期範圍內的排班日集合；無排班記錄則回傳 None（由呼叫方決定備援邏輯）"""
     rows = conn.execute("""
-        SELECT DISTINCT date FROM shift_assignments
-        WHERE staff_id=%s AND date BETWEEN %s AND %s
+        SELECT DISTINCT shift_date FROM shift_assignments
+        WHERE staff_id=%s AND shift_date BETWEEN %s AND %s
     """, (staff_id, start_date_str, end_date_str)).fetchall()
     if not rows:
         return None
-    return {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in rows}
+    return {r['shift_date'].isoformat() if hasattr(r['shift_date'], 'isoformat') else str(r['shift_date']) for r in rows}
 
 
 def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False,
@@ -4192,12 +4192,12 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     if total_work_days is None:
         # 1. 優先從排班取工作日
         shift_date_rows = conn.execute("""
-            SELECT DISTINCT date FROM shift_assignments
-            WHERE staff_id=%s AND TO_CHAR(date,'YYYY-MM')=%s
-            ORDER BY date
+            SELECT DISTINCT shift_date FROM shift_assignments
+            WHERE staff_id=%s AND TO_CHAR(shift_date,'YYYY-MM')=%s
+            ORDER BY shift_date
         """, (staff['id'], month)).fetchall()
         if shift_date_rows:
-            scheduled_dates = {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in shift_date_rows}
+            scheduled_dates = {r['shift_date'].isoformat() if hasattr(r['shift_date'], 'isoformat') else str(r['shift_date']) for r in shift_date_rows}
             total_work_days = len(scheduled_dates)
         else:
             # 2. 備援：日曆扣除週日 + 國定假日
