@@ -388,25 +388,31 @@ threading.Thread(target=keep_alive, daemon=True).start()
 def _run_annual_leave_sync():
     """依勞基法第38條，依到職日計算特休天數，寫入 leave_balances。每日午夜自動執行。"""
     from datetime import date as _d_sync
-    import json as _json_sync
     year = str(_d_sync.today().year)
     try:
         with get_db() as conn:
-            staff_list = conn.execute(
-                "SELECT id, name, hire_date FROM punch_staff WHERE active=TRUE AND hire_date IS NOT NULL"
-            ).fetchall()
-            lt = conn.execute("SELECT id FROM leave_types WHERE code='annual'").fetchone()
-            if not lt:
+            # 多 worker 防重：取得 advisory lock，拿不到就跳過
+            got_lock = conn.execute("SELECT pg_try_advisory_lock(1001)").fetchone()[0]
+            if not got_lock:
                 return
-            lt_id = lt['id']
-            for s in staff_list:
-                days = _calc_annual_leave_days(s['hire_date'])
-                conn.execute("""
-                    INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
-                    VALUES (%s,%s,%s,%s,0)
-                    ON CONFLICT (staff_id, leave_type_id, year) DO UPDATE
-                      SET total_days=EXCLUDED.total_days, updated_at=NOW()
-                """, (s['id'], lt_id, int(year), days))
+            try:
+                staff_list = conn.execute(
+                    "SELECT id, name, hire_date FROM punch_staff WHERE active=TRUE AND hire_date IS NOT NULL"
+                ).fetchall()
+                lt = conn.execute("SELECT id FROM leave_types WHERE code='annual'").fetchone()
+                if not lt:
+                    return
+                lt_id = lt['id']
+                for s in staff_list:
+                    days = _calc_annual_leave_days(s['hire_date'])
+                    conn.execute("""
+                        INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
+                        VALUES (%s,%s,%s,%s,0)
+                        ON CONFLICT (staff_id, leave_type_id, year) DO UPDATE
+                          SET total_days=EXCLUDED.total_days, updated_at=NOW()
+                    """, (s['id'], lt_id, int(year), days))
+            finally:
+                conn.execute("SELECT pg_advisory_unlock(1001)")
     except Exception as e:
         print(f"[annual_leave_sync] {e}")
 
@@ -447,11 +453,17 @@ def _run_monthly_salary_auto_generate():
     print(f"[salary_auto] 開始自動產生 {last_month} 薪資...")
     try:
         with get_db() as conn:
-            staff_list = conn.execute(
+            # 多 worker 防重：取得 advisory lock，拿不到就跳過
+            got_lock = conn.execute("SELECT pg_try_advisory_lock(1002)").fetchone()[0]
+            if not got_lock:
+                print(f"[salary_auto] 另一 worker 正在執行，略過。")
+                return
+            try:
+              staff_list = conn.execute(
                 "SELECT * FROM punch_staff WHERE active=TRUE"
-            ).fetchall()
-            generated = 0
-            for staff in staff_list:
+              ).fetchall()
+              generated = 0
+              for staff in staff_list:
                 data = _auto_generate_salary(conn, dict(staff), last_month)
                 items_json = _json_sal.dumps(data['items'], ensure_ascii=False)
                 conn.execute("""
@@ -468,7 +480,9 @@ def _run_monthly_salary_auto_generate():
                     data['net_pay'], items_json,
                 ))
                 generated += 1
-        print(f"[salary_auto] {last_month} 薪資自動產生完成，共 {generated} 筆。")
+              print(f"[salary_auto] {last_month} 薪資自動產生完成，共 {generated} 筆。")
+            finally:
+                conn.execute("SELECT pg_advisory_unlock(1002)")
     except Exception as e:
         print(f"[salary_auto] 產生失敗：{e}")
 
@@ -1159,6 +1173,20 @@ def api_punch_staff_update(sid):
 @login_required
 def api_punch_staff_delete(sid):
     with get_db() as conn:
+        punch_cnt = conn.execute(
+            "SELECT COUNT(*) AS n FROM punch_records WHERE staff_id=%s", (sid,)
+        ).fetchone()['n']
+        leave_cnt = conn.execute(
+            "SELECT COUNT(*) AS n FROM leave_requests WHERE staff_id=%s", (sid,)
+        ).fetchone()['n']
+        salary_cnt = conn.execute(
+            "SELECT COUNT(*) AS n FROM salary_records WHERE staff_id=%s", (sid,)
+        ).fetchone()['n']
+        if punch_cnt + leave_cnt + salary_cnt > 0:
+            return jsonify({
+                'error': f'此員工有歷史資料（打卡 {punch_cnt} 筆、假單 {leave_cnt} 筆、薪資 {salary_cnt} 筆），'
+                         '請改用「離職」功能停用帳號以保留記錄。'
+            }), 409
         conn.execute("DELETE FROM punch_staff WHERE id=%s", (sid,))
     return jsonify({'deleted': sid})
 
@@ -4095,7 +4123,8 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra_var
         tree = _ast.parse(formula.strip(), mode='eval')
         result = _safe_eval(tree)
         return round(float(result), 2)
-    except Exception:
+    except Exception as _fe:
+        print(f"[formula_error] 公式計算失敗：{formula!r}  原因：{_fe}")
         return 0.0
 
 def _calc_service_years(hire_date_str):
@@ -8993,8 +9022,17 @@ def api_finance_tax_sync(year, period):
 
     created = 0
     with get_db() as conn:
+        # 冪等性：同一期別已有 tax-sync 記錄就不重複建立
+        existing = conn.execute("""
+            SELECT id FROM finance_records
+            WHERE created_by='tax-sync' AND record_date=%s
+              AND title LIKE %s LIMIT 1
+        """, (record_date, f'%{period_label}%')).fetchone()
+        if existing:
+            return jsonify({'created': 0, 'message': f'該期別（{period_label}）已建立過分錄，略過。',
+                            'tax_payable': tax_payable})
+
         if tax_payable > 0:
-            # 應繳稅款 → expense under 稅費
             cat = conn.execute(
                 "SELECT id FROM finance_categories WHERE name='稅費' AND type='expense' LIMIT 1"
             ).fetchone()
@@ -9011,7 +9049,6 @@ def api_finance_tax_sync(year, period):
                   f"應繳營業稅 {period_label}", tax_payable, note))
             created += 1
         else:
-            # 退稅 → income under 其他收入
             cat = conn.execute(
                 "SELECT id FROM finance_categories WHERE name='其他收入' AND type='income' LIMIT 1"
             ).fetchone()
@@ -10974,16 +11011,23 @@ def mobile_admin_anomalies():
     except Exception:
         return jsonify({'error': '月份格式錯誤'}), 400
     import calendar
+    # 計算當月實際工作日（週一到週五）
     total_days = calendar.monthrange(y, m)[1]
+    from datetime import date as _dam
+    weekday_count = sum(
+        1 for d in range(1, total_days + 1)
+        if _dam(y, m, d).weekday() < 5
+    )
     with get_db() as conn:
         staff_all = conn.execute(
             "SELECT id, name, department FROM punch_staff WHERE active=TRUE ORDER BY name"
         ).fetchall()
         records = conn.execute(
-            """SELECT staff_id, punch_type, punched_at::date AS day
+            """SELECT staff_id,
+                      (punched_at AT TIME ZONE 'Asia/Taipei')::date AS day
                FROM punch_records
-               WHERE date_trunc('month', punched_at) = %s::date""",
-            (f'{y}-{m:02d}-01',)
+               WHERE TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM') = %s""",
+            (f'{y}-{m:02d}',)
         ).fetchall()
     from collections import defaultdict
     by_staff = defaultdict(set)
@@ -10995,7 +11039,9 @@ def mobile_admin_anomalies():
         work_days = len(by_staff[s['id']])
         result.append({
             'id': s['id'], 'name': s['name'], 'department': s['department'],
-            'work_days': work_days, 'missing_days': max(0, 22 - work_days),
+            'work_days': work_days,
+            'expected_days': weekday_count,
+            'missing_days': max(0, weekday_count - work_days),
         })
     return jsonify(result)
 
