@@ -1339,12 +1339,12 @@ def api_attendance_monthly_stats():
 
         # 班別指派（用於遲到判斷）
         shift_rows = conn.execute("""
-            SELECT sa.staff_id, sa.date, st.start_time, st.end_time
+            SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
-            WHERE TO_CHAR(sa.date,'YYYY-MM') = %s
+            WHERE TO_CHAR(sa.shift_date,'YYYY-MM') = %s
         """, (month,)).fetchall()
-        shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
+        shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
 
     from collections import defaultdict
     stats = defaultdict(lambda: {
@@ -5939,7 +5939,7 @@ def api_dashboard_leave_distribution():
         rows = conn.execute("""
             SELECT lt.name, lt.color,
                    COUNT(*) as cnt,
-                   COALESCE(SUM(lr.days), 0) as days
+                   COALESCE(SUM(lr.total_days), 0) as days
             FROM leave_requests lr
             JOIN leave_types lt ON lt.id=lr.leave_type_id
             WHERE lr.status='approved'
@@ -6797,11 +6797,19 @@ def api_ot_batch():
             """, (new_status, by, note, rid)).fetchone()
             if row:
                 if action == 'approve':
-                    pay, _ = _calc_ot_pay(dict(row), float(row['ot_hours']),
-                                          row.get('day_type','weekday'))
-                    conn.execute("""
-                        UPDATE overtime_requests SET ot_pay=%s WHERE id=%s
-                    """, (pay, rid))
+                    staff_s = conn.execute("""
+                        SELECT base_salary, hourly_rate, daily_hours,
+                               ot_rate1, ot_rate2, salary_type
+                        FROM punch_staff WHERE id=%s
+                    """, (row['staff_id'],)).fetchone()
+                    pay = 0.0
+                    if staff_s:
+                        pay, _ = _calc_ot_pay(dict(staff_s), float(row['ot_hours'] or 0),
+                                              row.get('day_type', 'weekday') or 'weekday')
+                    conn.execute(
+                        "UPDATE overtime_requests SET ot_pay=%s WHERE id=%s", (pay, rid))
+                    ot_month = str(row['request_date'])[:7]
+                    _trigger_salary_regen_for_leave(conn, row['staff_id'], ot_month)
                 _notify_review_result(row['staff_id'], '加班申請', action, '')
                 done += 1
     return jsonify({'ok': True, 'done': done})
@@ -6901,12 +6909,12 @@ def api_attendance_anomalies():
 
         # 取得班別指派（用於遲到／早退判斷）
         shift_rows = conn.execute("""
-            SELECT sa.staff_id, sa.date, st.start_time, st.end_time, st.name as shift_name
+            SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time, st.name as shift_name
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
-            WHERE sa.date BETWEEN %s AND %s
+            WHERE sa.shift_date BETWEEN %s AND %s
         """, (date_from, today)).fetchall()
-        shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
+        shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
 
         # 今日應出勤但未出勤（排除請假）
         all_staff = conn.execute(
@@ -7871,7 +7879,7 @@ def api_salary_preview():
                 SELECT COUNT(*) AS n, COALESCE(SUM(ot_hours),0) AS hrs
                 FROM overtime_requests WHERE staff_id=%s
                   AND status='approved'
-                  AND to_char(COALESCE(ot_date, request_date),'YYYY-MM')=%s
+                  AND to_char(request_date,'YYYY-MM')=%s
             """, (staff['id'], month)).fetchone()
             result.append({
                 'staff_id':       data['staff_id'],
@@ -10538,7 +10546,7 @@ def mobile_leave_list():
     with get_db() as conn:
         rows = conn.execute(
             """SELECT lr.id, lt.name AS leave_type, lr.start_date, lr.end_date,
-                      lr.days, lr.reason, lr.status, lr.created_at
+                      lr.total_days, lr.reason, lr.status, lr.created_at
                FROM leave_requests lr
                JOIN leave_types lt ON lr.leave_type_id = lt.id
                WHERE lr.staff_id=%s ORDER BY lr.created_at DESC LIMIT 50""",
@@ -10570,14 +10578,21 @@ def mobile_leave_apply():
     try:
         sd = _dt.strptime(start_date, '%Y-%m-%d').date()
         ed = _dt.strptime(end_date,   '%Y-%m-%d').date()
-        days = (ed - sd).days + 1
+        if ed < sd:
+            return jsonify({'error': '結束日期不得早於開始日期'}), 400
     except Exception:
         return jsonify({'error': '日期格式錯誤'}), 400
     with get_db() as conn:
+        sched = _get_staff_scheduled_dates(conn, staff_id, start_date, end_date)
+        total_days = _calc_leave_days(start_date, end_date, scheduled_dates=sched)
+        if total_days <= 0:
+            return jsonify({'error': '所選日期無工作日'}), 400
         conn.execute(
-            """INSERT INTO leave_requests (staff_id, leave_type_id, start_date, end_date, days, reason, status)
-               VALUES (%s, %s, %s, %s, %s, %s, 'pending')""",
-            (staff_id, leave_type_id, start_date, end_date, days, reason)
+            """INSERT INTO leave_requests
+               (staff_id, leave_type_id, start_date, end_date, total_days,
+                start_half, end_half, reason, status, start_time, end_time, created_at)
+               VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, %s, 'pending', '', '', NOW())""",
+            (staff_id, leave_type_id, start_date, end_date, total_days, reason)
         )
     return jsonify({'ok': True})
 
@@ -10626,17 +10641,16 @@ def mobile_salary():
     staff_id = int(u['sub'])
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT id, period_year, period_month, base_salary, bonus, deductions,
-                      net_salary, status, paid_at, created_at
-               FROM salary_records WHERE staff_id=%s ORDER BY period_year DESC, period_month DESC LIMIT 12""",
+            """SELECT id, month, base_salary, allowance_total, deduction_total,
+                      net_pay, status, updated_at
+               FROM salary_records WHERE staff_id=%s ORDER BY month DESC LIMIT 12""",
             (staff_id,)
         ).fetchall()
     data = []
     for r in rows:
         d = dict(r)
-        for k in ('paid_at','created_at'):
-            if d.get(k): d[k] = str(d[k])
-        for k in ('base_salary','bonus','deductions','net_salary'):
+        if d.get('updated_at'): d['updated_at'] = str(d['updated_at'])
+        for k in ('base_salary','allowance_total','deduction_total','net_pay'):
             if d.get(k) is not None: d[k] = float(d[k])
         data.append(d)
     return jsonify(data)
@@ -10652,22 +10666,22 @@ def mobile_overtime():
         return jsonify({'error': '僅員工可申請'}), 403
     staff_id = int(u['sub'])
     b = request.get_json(force=True) or {}
-    ot_date = b.get('ot_date')
-    hours   = b.get('hours')
-    reason  = b.get('reason', '')
-    if not ot_date or not hours:
+    request_date = b.get('request_date') or b.get('ot_date')
+    hours        = b.get('hours')
+    reason       = b.get('reason', '')
+    if not request_date or not hours:
         return jsonify({'error': '缺少必填欄位'}), 400
     try:
-        _dt.strptime(ot_date, '%Y-%m-%d')
+        _dt.strptime(request_date, '%Y-%m-%d')
         hours = float(hours)
     except Exception:
         return jsonify({'error': '格式錯誤'}), 400
     with get_db() as conn:
         conn.execute(
             """INSERT INTO overtime_requests
-               (staff_id, ot_date, ot_hours, reason, status)
-               VALUES (%s, %s, %s, %s, 'pending')""",
-            (staff_id, ot_date, hours, reason)
+               (staff_id, request_date, start_time, end_time, ot_hours, reason, status)
+               VALUES (%s, %s, '00:00', '00:00', %s, %s, 'pending')""",
+            (staff_id, request_date, hours, reason)
         )
     return jsonify({'ok': True})
 
@@ -10681,14 +10695,14 @@ def mobile_overtime_list():
     staff_id = int(u['sub'])
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT id, ot_date, ot_hours, reason, status, created_at
-               FROM overtime_requests WHERE staff_id=%s ORDER BY ot_date DESC LIMIT 30""",
+            """SELECT id, request_date, ot_hours, reason, status, created_at
+               FROM overtime_requests WHERE staff_id=%s ORDER BY request_date DESC LIMIT 30""",
             (staff_id,)
         ).fetchall()
     data = []
     for r in rows:
         d = dict(r)
-        for k in ('ot_date','created_at'):
+        for k in ('request_date','created_at'):
             if d.get(k): d[k] = str(d[k])
         if d.get('ot_hours'): d['ot_hours'] = float(d['ot_hours'])
         data.append(d)
@@ -10771,7 +10785,7 @@ def mobile_admin_leaves():
     with get_db() as conn:
         rows = conn.execute(
             """SELECT lr.id, ps.name AS staff_name, lt.name AS leave_type,
-                      lr.start_date, lr.end_date, lr.days, lr.reason, lr.status, lr.created_at
+                      lr.start_date, lr.end_date, lr.total_days, lr.reason, lr.status, lr.created_at
                FROM leave_requests lr
                JOIN punch_staff ps ON lr.staff_id = ps.id
                JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -10798,10 +10812,23 @@ def mobile_admin_leave_action(lid):
     status = 'approved' if action == 'approve' else 'rejected'
     reviewer = g.mobile_user.get('display_name', g.mobile_user.get('username', ''))
     with get_db() as conn:
+        old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (lid,)).fetchone()
+        if not old:
+            return jsonify({'error': '找不到請假記錄'}), 404
         conn.execute(
             "UPDATE leave_requests SET status=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s",
             (status, reviewer, lid)
         )
+        if action == 'approve' and old['status'] != 'approved':
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], float(old['total_days'] or 0))
+            _trigger_salary_regen_for_leave(conn, old['staff_id'], str(old['start_date'])[:7])
+        elif action == 'reject' and old['status'] == 'approved':
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -float(old['total_days'] or 0))
+            _trigger_salary_regen_for_leave(conn, old['staff_id'], str(old['start_date'])[:7])
+    _notify_review_result(old['staff_id'], '請假申請', action,
+                          f'{old["start_date"]} ～ {old["end_date"]}')
     return jsonify({'ok': True})
 
 # ── Admin: Overtime Requests ───────────────────────────────────────────────────
@@ -10812,7 +10839,7 @@ def mobile_admin_overtime():
     status = request.args.get('status', 'pending')
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT ot.id, ps.name AS staff_name, ot.ot_date, ot.ot_hours,
+            """SELECT ot.id, ps.name AS staff_name, ot.request_date, ot.ot_hours,
                       ot.reason, ot.status, ot.created_at
                FROM overtime_requests ot
                JOIN punch_staff ps ON ot.staff_id = ps.id
@@ -10823,7 +10850,7 @@ def mobile_admin_overtime():
     data = []
     for r in rows:
         d = dict(r)
-        for k in ('ot_date','created_at'):
+        for k in ('request_date','created_at'):
             if d.get(k): d[k] = str(d[k])
         if d.get('ot_hours'): d['ot_hours'] = float(d['ot_hours'])
         data.append(d)
@@ -10840,10 +10867,27 @@ def mobile_admin_overtime_action(oid):
     status = 'approved' if action == 'approve' else 'rejected'
     reviewer = g.mobile_user.get('display_name', g.mobile_user.get('username', ''))
     with get_db() as conn:
+        req = conn.execute("SELECT * FROM overtime_requests WHERE id=%s", (oid,)).fetchone()
+        if not req:
+            return jsonify({'error': '找不到加班記錄'}), 404
+        ot_pay_val = 0.0
+        if action == 'approve' and req['status'] != 'approved':
+            staff_s = conn.execute("""
+                SELECT base_salary, hourly_rate, daily_hours, ot_rate1, ot_rate2, salary_type
+                FROM punch_staff WHERE id=%s
+            """, (req['staff_id'],)).fetchone()
+            if staff_s:
+                ot_pay_val, _ = _calc_ot_pay(dict(staff_s), float(req['ot_hours'] or 0),
+                                             req.get('day_type', 'weekday') or 'weekday')
         conn.execute(
-            "UPDATE overtime_requests SET status=%s, reviewed_by=%s, reviewed_at=NOW() WHERE id=%s",
-            (status, reviewer, oid)
+            """UPDATE overtime_requests SET status=%s, reviewed_by=%s,
+               reviewed_at=NOW(), ot_pay=%s WHERE id=%s""",
+            (status, reviewer, ot_pay_val if action == 'approve' else 0.0, oid)
         )
+        ot_month = str(req['request_date'])[:7]
+        _trigger_salary_regen_for_leave(conn, req['staff_id'], ot_month)
+    _notify_review_result(req['staff_id'], '加班申請', action,
+                          str(req['request_date']))
     return jsonify({'ok': True})
 
 # ── Admin: Staff List ──────────────────────────────────────────────────────────
