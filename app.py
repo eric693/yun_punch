@@ -54,14 +54,14 @@ import calendar as _calendar
 from datetime import date as _date_cls
 
 def _month_ts_range(month: str):
-    """'YYYY-MM' → (start, end) TIMESTAMPTZ (UTC+8)，用於 punched_at >= %s AND punched_at < %s"""
+    """'YYYY-MM' -> (start, end) TIMESTAMPTZ (UTC+8),用於 punched_at >= %s AND punched_at < %s"""
     y, m = int(month[:4]), int(month[5:7])
     start = _dt(y, m, 1, tzinfo=TW_TZ)
     end   = _dt(y + 1, 1, 1, tzinfo=TW_TZ) if m == 12 else _dt(y, m + 1, 1, tzinfo=TW_TZ)
     return start, end
 
 def _month_date_range(month: str):
-    """'YYYY-MM' → (first_date, first_date_of_next_month)，用於 date >= %s AND date < %s"""
+    """'YYYY-MM' -> (first_date, first_date_of_next_month),用於 date >= %s AND date < %s"""
     y, m = int(month[:4]), int(month[5:7])
     last_day = _calendar.monthrange(y, m)[1]
     return _date_cls(y, m, 1), _date_cls(y, m, last_day) + _td(days=1)
@@ -95,7 +95,7 @@ def _hash_pw(pw):
 
 def init_db():
     if not DATABASE_URL:
-        print("[WARNING] DATABASE_URL not set — skipping init_db()")
+        print("[WARNING] DATABASE_URL not set - skipping init_db()")
         return
     try:
         with get_db() as conn:
@@ -360,7 +360,7 @@ def init_db():
             last_login_at   TIMESTAMPTZ
         )""",
         # ── 效能索引 ──────────────────────────────────────────────────────────
-        # punch_records: 最常被查詢的資料表，依 staff_id + punched_at 過濾
+        # punch_records: 最常被查詢的資料表,依 staff_id + punched_at 過濾
         "CREATE INDEX IF NOT EXISTS idx_pr_staff_at   ON punch_records(staff_id, punched_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_pr_at          ON punch_records(punched_at DESC)",
         # leave_requests: 依員工 + 日期 + 狀態過濾
@@ -414,7 +414,7 @@ def init_db():
     except Exception as e:
         print(f"[WARN] admin seed: {e}")
 
-    # 確保預設店家存在，並補齊舊資料
+    # 確保預設店家存在,並補齊舊資料
     try:
         with get_db() as conn:
             conn.execute("INSERT INTO stores (name, code) VALUES ('主店','main') ON CONFLICT (code) DO NOTHING")
@@ -450,12 +450,12 @@ threading.Thread(target=keep_alive, daemon=True).start()
 # ─── 特休自動同步 ─────────────────────────────────────────────────────────────
 
 def _run_annual_leave_sync():
-    """依勞基法第38條，依到職日計算特休天數，寫入 leave_balances。每日午夜自動執行。"""
+    """依勞基法第38條,依到職日計算特休天數,寫入 leave_balances.每日午夜自動執行."""
     from datetime import date as _d_sync
     year = str(_d_sync.today().year)
     try:
         with get_db() as conn:
-            # 多 worker 防重：取得 advisory lock，拿不到就跳過
+            # 多 worker 防重:取得 advisory lock,拿不到就跳過
             got_lock = conn.execute("SELECT pg_try_advisory_lock(1001)").fetchone()[0]
             if not got_lock:
                 return
@@ -503,11 +503,11 @@ threading.Thread(target=_annual_leave_sync_loop, daemon=True).start()
 # ─── 每月1日自動產生上月薪資 ──────────────────────────────────────────────────
 
 def _run_monthly_salary_auto_generate():
-    """每月1日 00:10（台北時間）自動產生所有在職員工上月薪資（draft）。"""
+    """每月1日 00:10(台北時間)自動產生所有在職員工上月薪資(draft)."""
     from datetime import date as _d_sal
     import json as _json_sal
 
-    # 計算上月月份字串，例如今天是 2026-05-01 → 上月為 2026-04
+    # 計算上月月份字串,例如今天是 2026-05-01 -> 上月為 2026-04
     today = _d_sal.today()
     if today.month == 1:
         last_month = f"{today.year - 1}-12"
@@ -517,10 +517,10 @@ def _run_monthly_salary_auto_generate():
     print(f"[salary_auto] 開始自動產生 {last_month} 薪資...")
     try:
         with get_db() as conn:
-            # 多 worker 防重：取得 advisory lock，拿不到就跳過
+            # 多 worker 防重:取得 advisory lock,拿不到就跳過
             got_lock = conn.execute("SELECT pg_try_advisory_lock(1002)").fetchone()[0]
             if not got_lock:
-                print(f"[salary_auto] 另一 worker 正在執行，略過。")
+                print(f"[salary_auto] 另一 worker 正在執行,略過.")
                 return
             try:
               staff_list = conn.execute(
@@ -544,11 +544,11 @@ def _run_monthly_salary_auto_generate():
                     data['net_pay'], items_json,
                 ))
                 generated += 1
-              print(f"[salary_auto] {last_month} 薪資自動產生完成，共 {generated} 筆。")
+              print(f"[salary_auto] {last_month} 薪資自動產生完成,共 {generated} 筆.")
             finally:
                 conn.execute("SELECT pg_advisory_unlock(1002)")
     except Exception as e:
-        print(f"[salary_auto] 產生失敗：{e}")
+        print(f"[salary_auto] 產生失敗:{e}")
 
 
 def _monthly_salary_auto_loop():
@@ -562,16 +562,16 @@ def _monthly_salary_auto_loop():
             target = _dt(now.year, now.month, 1, 0, 10, tzinfo=TW_TZ)
             if now >= target:
                 _run_monthly_salary_auto_generate()
-                # 執行完後等待 25 小時，避免同一天重複執行
+                # 執行完後等待 25 小時,避免同一天重複執行
                 _time_sal.sleep(25 * 3600)
                 continue
-        # 計算下次執行時間：下個月1日 00:10
+        # 計算下次執行時間:下個月1日 00:10
         if now.month == 12:
             next_run = _dt(now.year + 1, 1, 1, 0, 10, tzinfo=TW_TZ)
         else:
             next_run = _dt(now.year, now.month + 1, 1, 0, 10, tzinfo=TW_TZ)
         sleep_secs = (next_run - now).total_seconds()
-        print(f"[salary_auto] 下次執行時間：{next_run.strftime('%Y-%m-%d %H:%M')}（台北時間），約 {sleep_secs/3600:.1f} 小時後")
+        print(f"[salary_auto] 下次執行時間:{next_run.strftime('%Y-%m-%d %H:%M')}(台北時間),約 {sleep_secs/3600:.1f} 小時後")
         _time_sal.sleep(max(sleep_secs, 60))
 
 
@@ -602,7 +602,7 @@ def login_required(f):
     return decorated
 
 def require_module(module):
-    """確認已登入且擁有指定模組權限（超級管理員跳過模組檢查）。"""
+    """確認已登入且擁有指定模組權限(超級管理員跳過模組檢查)."""
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
@@ -619,7 +619,7 @@ def require_module(module):
     return decorator
 
 def require_super(f):
-    """只允許超級管理員存取。"""
+    """只允許超級管理員存取."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('logged_in'):
@@ -1047,12 +1047,12 @@ def api_punch_clock():
 
     if gps_required:
         if lat is None or lng is None:
-            return jsonify({'error': '無法取得 GPS，請允許定位權限後重試'}), 403
+            return jsonify({'error': '無法取得 GPS,請允許定位權限後重試'}), 403
         if not locs:
             return jsonify({'error': '管理員尚未設定任何打卡地點'}), 403
         if gps_distance is None or gps_distance > int(matched_loc['radius_m']):
             return jsonify({
-                'error': f'距離最近地點「{matched_loc["location_name"]}」{gps_distance} 公尺，超出允許範圍（{matched_loc["radius_m"]} 公尺）',
+                'error': f'距離最近地點「{matched_loc["location_name"]}」{gps_distance} 公尺,超出允許範圍({matched_loc["radius_m"]} 公尺)',
                 'distance': gps_distance,
                 'radius': int(matched_loc['radius_m'])
             }), 403
@@ -1169,24 +1169,29 @@ def api_punch_staff_create():
     account_holder = (b.get('account_holder') or '').strip()
     try:
         with get_db() as conn:
+            default_store = conn.execute(
+                "SELECT id FROM stores ORDER BY id LIMIT 1"
+            ).fetchone()
+            default_store_id = default_store['id'] if default_store else None
             row = conn.execute("""
                 INSERT INTO punch_staff
                   (name, username, password_hash, password_plain, role, employee_code,
                    department, hire_date, birth_date,
-                   bank_code, bank_name, bank_branch, bank_account, account_holder)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+                   bank_code, bank_name, bank_branch, bank_account, account_holder, store_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
             """, (name, username, _hash_pw(password), password, b.get('role', '').strip(), employee_code,
                   department, hire_date, birth_date,
-                  bank_code, bank_name, bank_branch, bank_account, account_holder)).fetchone()
+                  bank_code, bank_name, bank_branch, bank_account, account_holder,
+                  default_store_id)).fetchone()
         return jsonify(punch_staff_row(row)), 201
     except psycopg.errors.UniqueViolation:
-        return jsonify({'error': '姓名或帳號已存在，請換一個'}), 409
+        return jsonify({'error': '姓名或帳號已存在,請換一個'}), 409
     except Exception as e:
         print(f"[punch_staff_create] error: {e}")
         # Check if it's a unique constraint in the error message
         if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
-            return jsonify({'error': '姓名或帳號已存在，請換一個'}), 409
-        return jsonify({'error': f'新增失敗：{str(e)}'}), 500
+            return jsonify({'error': '姓名或帳號已存在,請換一個'}), 409
+        return jsonify({'error': f'新增失敗:{str(e)}'}), 500
 
 @app.route('/api/punch/staff/<int:sid>', methods=['PUT'])
 @login_required
@@ -1249,8 +1254,8 @@ def api_punch_staff_delete(sid):
         ).fetchone()['n']
         if punch_cnt + leave_cnt + salary_cnt > 0:
             return jsonify({
-                'error': f'此員工有歷史資料（打卡 {punch_cnt} 筆、假單 {leave_cnt} 筆、薪資 {salary_cnt} 筆），'
-                         '請改用「離職」功能停用帳號以保留記錄。'
+                'error': f'此員工有歷史資料(打卡 {punch_cnt} 筆、假單 {leave_cnt} 筆、薪資 {salary_cnt} 筆),'
+                         '請改用「離職」功能停用帳號以保留記錄.'
             }), 409
         conn.execute("DELETE FROM punch_staff WHERE id=%s", (sid,))
     return jsonify({'deleted': sid})
@@ -1362,7 +1367,7 @@ def api_punch_summary():
             ORDER BY (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date ASC, ps.name
         """, (month,)).fetchall()]
 
-    # 跨日班次合併：上班在 day N、下班在 day N+1
+    # 跨日班次合併:上班在 day N、下班在 day N+1
     from datetime import date as _dcm, timedelta as _tdcm
     _row_map = {(r['staff_id'], str(r['work_date'])): r for r in rows}
     _skip_keys = set()
@@ -1402,8 +1407,8 @@ def api_punch_summary():
 @login_required
 def api_attendance_monthly_stats():
     """
-    月出勤統計報表（每位員工匯總）
-    回傳：出勤天數、總工時、遲到次數、缺打卡次數、平均工時
+    月出勤統計報表(每位員工匯總)
+    回傳:出勤天數、總工時、遲到次數、缺打卡次數、平均工時
     """
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
@@ -1424,7 +1429,7 @@ def api_attendance_monthly_stats():
             ORDER BY ps.name, work_date
         """, (month,)).fetchall()]
 
-        # 跨日班次合併：day N 有上班無下班 + day N+1 有下班無上班 → 歸入 day N
+        # 跨日班次合併:day N 有上班無下班 + day N+1 有下班無上班 -> 歸入 day N
         from datetime import date as _dcs, timedelta as _tdcs
         _stat_map = {(r['staff_id'], str(r['work_date'])): r for r in rows}
         _stat_skip = set()
@@ -1440,7 +1445,7 @@ def api_attendance_monthly_stats():
                     _stat_skip.add((sid, next_ds))
         rows = [r for r in rows if (r['staff_id'], str(r['work_date'])) not in _stat_skip]
 
-        # 班別指派（用於遲到判斷）
+        # 班別指派(用於遲到判斷)
         shift_rows = conn.execute("""
             SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time
             FROM shift_assignments sa
@@ -1485,7 +1490,7 @@ def api_attendance_monthly_stats():
             s['missing_in_count'] += 1
             s['anomaly_dates'].append({'date': ds, 'type': 'missing_in', 'label': '缺上班卡'})
 
-        # 遲到（比對班別）
+        # 遲到(比對班別)
         if has_in and r['clock_in']:
             shift = shift_map.get((sid, ds))
             if shift and shift['start_time']:
@@ -1501,7 +1506,7 @@ def api_attendance_monthly_stats():
                 except Exception:
                     pass
 
-        # 早退（比對班別）
+        # 早退(比對班別)
         if has_out and r['clock_out']:
             shift = shift_map.get((sid, ds))
             if shift and shift['end_time']:
@@ -1668,11 +1673,11 @@ def _handle_line_punch_event(event, cfg):
 
     if evt_type == 'follow':
         _send_line_punch(user_id,
-            '歡迎使用員工打卡系統！👋\n\n'
-            '請輸入您的登入帳號完成綁定。\n\n'
-            '✏️ 輸入範例：\n  綁定 mary123\n'
-            '（請將 mary123 換成您自己的帳號）\n\n'
-            '不知道帳號？請詢問管理員。')
+            '歡迎使用員工打卡系統!👋\n\n'
+            '請輸入您的登入帳號完成綁定.\n\n'
+            '✏️ 輸入範例:\n  綁定 mary123\n'
+            '(請將 mary123 換成您自己的帳號)\n\n'
+            '不知道帳號?請詢問管理員.')
         return
 
     if evt_type != 'message': return
@@ -1690,8 +1695,8 @@ def _handle_line_punch_event(event, cfg):
                 username = text.split(' ', 1)[1].strip()
                 if username in ('帳號', '您的帳號', '[您的帳號]', 'username', '帳號名稱'):
                     _send_line_punch(user_id,
-                        '請輸入您「實際的」登入帳號，而非說明文字。\n\n'
-                        '範例：綁定 mary123')
+                        '請輸入您「實際的」登入帳號,而非說明文字.\n\n'
+                        '範例:綁定 mary123')
                     return
                 with get_db() as conn:
                     candidate = conn.execute(
@@ -1701,10 +1706,10 @@ def _handle_line_punch_event(event, cfg):
                 if not candidate:
                     _send_line_punch(user_id,
                         f'找不到帳號「{username}」\n\n'
-                        '請確認帳號是否正確，或詢問管理員您的登入帳號。')
+                        '請確認帳號是否正確,或詢問管理員您的登入帳號.')
                     return
                 if candidate['line_user_id']:
-                    _send_line_punch(user_id, '此帳號已綁定其他 LINE 帳號，請聯絡管理員。')
+                    _send_line_punch(user_id, '此帳號已綁定其他 LINE 帳號,請聯絡管理員.')
                     return
                 with get_db() as conn:
                     conn.execute(
@@ -1712,15 +1717,15 @@ def _handle_line_punch_event(event, cfg):
                         (user_id, candidate['id'])
                     )
                 _send_line_punch(user_id,
-                    f'✅ 綁定成功！\n歡迎 {candidate["name"]}！\n\n'
-                    '打卡方式：\n📍 傳送位置訊息 → 自動打卡\n'
-                    '💬 或輸入：上班 / 下班 / 休息 / 回來\n\n'
-                    '輸入「狀態」可查看今日打卡記錄。')
+                    f'✅ 綁定成功!\n歡迎 {candidate["name"]}!\n\n'
+                    '打卡方式:\n📍 傳送位置訊息 -> 自動打卡\n'
+                    '💬 或輸入:上班 / 下班 / 休息 / 回來\n\n'
+                    '輸入「狀態」可查看今日打卡記錄.')
             else:
                 _send_line_punch(user_id,
-                    '您尚未綁定打卡帳號。\n\n'
-                    '請輸入您的登入帳號：\n  綁定 [您的帳號]\n\n'
-                    '範例：綁定 mary123')
+                    '您尚未綁定打卡帳號.\n\n'
+                    '請輸入您的登入帳號:\n  綁定 [您的帳號]\n\n'
+                    '範例:綁定 mary123')
         return
 
     # ── Bound staff ───────────────────────────────────────────
@@ -1748,7 +1753,7 @@ def _handle_line_punch_event(event, cfg):
         if text == '解除綁定':
             with get_db() as conn:
                 conn.execute("UPDATE punch_staff SET line_user_id=NULL WHERE id=%s", (staff['id'],))
-            _send_line_punch(user_id, '已解除 LINE 帳號綁定。'); return
+            _send_line_punch(user_id, '已解除 LINE 帳號綁定.'); return
 
         punch_type = PUNCH_CMDS.get(text)
         if punch_type:
@@ -1789,7 +1794,7 @@ def _handle_line_punch_event(event, cfg):
             _line_overtime_start(staff, user_id)
         elif text.startswith('申請加班'):
             _line_submit_overtime(staff, user_id, text)
-        elif text in ('選單', '功能', '菜單', '?', '？', 'help', 'Help', 'HELP'):
+        elif text in ('選單', '功能', '菜單', '?', '?', 'help', 'Help', 'HELP'):
             _line_show_help(staff, user_id)
         else:
             _line_show_help(staff, user_id)
@@ -1819,8 +1824,8 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
         elif last['punch_type'] == 'break_out':
             punch_type = 'break_in'
         else:
-            # 上次為 out 或 break_in → 預期下次 in
-            # 若剛打卡下班不到 10 分鐘，先確認避免誤操作
+            # 上次為 out 或 break_in -> 預期下次 in
+            # 若剛打卡下班不到 10 分鐘,先確認避免誤操作
             if last['punch_type'] == 'out' and last.get('punched_at'):
                 last_time = last['punched_at']
                 now_tw = _dt3.now(TW)
@@ -1830,7 +1835,7 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
                 if diff_min < 10:
                     last_str = last_time.strftime('%H:%M')
                     _send_line_with_quick_reply(user_id,
-                        f'⚠️ 您剛於 {last_str} 打卡下班（{diff_min:.0f} 分鐘前）\n\n確定要打卡上班嗎？',
+                        f'⚠️ 您剛於 {last_str} 打卡下班({diff_min:.0f} 分鐘前)\n\n確定要打卡上班嗎?',
                         [{'label': '✅ 確認上班打卡', 'text': '上班打卡'},
                          {'label': '❌ 取消',        'text': '狀態'}])
                     return
@@ -1858,7 +1863,7 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
                     f'❌ {label}失敗\n'
                     f'您距離「{min_loc["location_name"]}」{min_dist} 公尺\n'
                     f'超出允許範圍 {min_loc["radius_m"]} 公尺\n\n'
-                    '請確認您在正確地點後重試。')
+                    '請確認您在正確地點後重試.')
                 return
 
     # Duplicate guard
@@ -1869,7 +1874,7 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
               AND punched_at > NOW() - INTERVAL '1 minute'
         """, (staff['id'], punch_type)).fetchone()
         if recent:
-            _send_line_punch(user_id, f'⚠️ 1 分鐘內已打過{label}，請勿重複打卡。'); return
+            _send_line_punch(user_id, f'⚠️ 1 分鐘內已打過{label},請勿重複打卡.'); return
 
         conn.execute("""
             INSERT INTO punch_records
@@ -1900,7 +1905,7 @@ def _send_status(staff, user_id):
         """, (staff['id'],)).fetchall()
     LABEL = {'in': '上班', 'out': '下班', 'break_out': '休息開始', 'break_in': '休息結束'}
     if not rows:
-        _send_line_punch(user_id, f'📋 {staff["name"]} 今日尚無打卡記錄。'); return
+        _send_line_punch(user_id, f'📋 {staff["name"]} 今日尚無打卡記錄.'); return
     lines = [f'📋 {staff["name"]} 今日打卡記錄']
     for r in rows:
         pa = r['punched_at']
@@ -2040,7 +2045,7 @@ def api_richmenu_create():
 
     rich_menu_id = data.get('richMenuId', '')
 
-    # Upload image — 1) Google Drive  2) custom local file  3) auto-generate
+    # Upload image - 1) Google Drive  2) custom local file  3) auto-generate
     png_bytes = None
 
     if gdrive_url:
@@ -2199,7 +2204,7 @@ def api_sched_submit():
 
             if len(dates) > effective_quota:
                 quota_source = '個人配額' if personal_quota is not None else '月份預設配額'
-                return jsonify({'error': f'申請天數（{len(dates)}天）超過{quota_source}（{effective_quota}天）'}), 422
+                return jsonify({'error': f'申請天數({len(dates)}天)超過{quota_source}({effective_quota}天)'}), 422
 
             overcrowded = []
             for d in dates:
@@ -2223,8 +2228,8 @@ def api_sched_submit():
                         'max': cfg['max_off_per_day']
                     })
             if overcrowded:
-                msgs = [f"{x['date']}（{x['weekday']}）已有 {x['count']} 人排休" for x in overcrowded]
-                return jsonify({'error': '以下日期休假人數已達上限：' + '、'.join(msgs), 'overcrowded': overcrowded}), 422
+                msgs = [f"{x['date']}({x['weekday']})已有 {x['count']} 人排休" for x in overcrowded]
+                return jsonify({'error': '以下日期休假人數已達上限:' + '、'.join(msgs), 'overcrowded': overcrowded}), 422
 
             prev = conn.execute(
                 "SELECT status FROM schedule_requests WHERE staff_id=%s AND month=%s",
@@ -2247,7 +2252,7 @@ def api_sched_submit():
     except Exception as e:
         import traceback as _tb
         print(f"[SCHED SUBMIT ERROR] {e}\n{_tb.format_exc()}")
-        return jsonify({'error': f'系統錯誤：{str(e)}'}), 500
+        return jsonify({'error': f'系統錯誤:{str(e)}'}), 500
 
 # ── Admin: schedule config ────────────────────────────────────────
 
@@ -2329,7 +2334,7 @@ def api_sched_admin_review(rid):
     if row:
         dates = row['dates'] if isinstance(row['dates'], list) else _json.loads(row['dates'] or '[]')
         extra = f"{row['month']} 排休 {len(dates)} 天"
-        if review_note: extra += f"\n審核意見：{review_note}"
+        if review_note: extra += f"\n審核意見:{review_note}"
         _notify_review_result(row['staff_id'], '排休申請', action, extra)
     return jsonify(sched_req_row(row)) if row else ('', 404)
 
@@ -2535,7 +2540,7 @@ def api_shift_assignment_create():
             for sid in staff_ids:
                 months = list({d[:7] for d in dates})
                 for month in months:
-                    # 同時擋「已核准」和「待審核」的排休申請，避免指派衝突
+                    # 同時擋「已核准」和「待審核」的排休申請,避免指派衝突
                     rows_sr = conn.execute("""
                         SELECT dates FROM schedule_requests
                         WHERE staff_id=%s AND month=%s
@@ -2572,7 +2577,7 @@ def api_shift_assignment_create():
 
     if blocked and created == 0:
         return jsonify({
-            'error': '以下日期員工已有排休申請（核准或待審），無法指派班別：' +
+            'error': '以下日期員工已有排休申請(核准或待審),無法指派班別:' +
                      '、'.join([f'{x["staff_name"]} {x["date"]}' for x in blocked]),
             'blocked': blocked
         }), 422
@@ -2586,15 +2591,15 @@ def api_shift_assignment_create():
         if shift_info:
             date_range = f"{min(dates)} ~ {max(dates)}" if len(dates) > 1 else dates[0]
             msg = (f"[排班通知] 已為您安排班別\n"
-                   f"班別：{shift_info['name']}（{str(shift_info['start_time'])[:5]}～{str(shift_info['end_time'])[:5]}）\n"
-                   f"日期：{date_range}\n"
-                   f"共 {len(dates)} 天，請至員工系統查看完整排班。")
+                   f"班別:{shift_info['name']}({str(shift_info['start_time'])[:5]}~{str(shift_info['end_time'])[:5]})\n"
+                   f"日期:{date_range}\n"
+                   f"共 {len(dates)} 天,請至員工系統查看完整排班.")
             for sid in staff_ids:
                 _notify_staff_line(sid, msg)
 
     result = {'created': created}
     if blocked:
-        result['warning'] = f'已指派 {created} 筆，跳過 {len(blocked)} 筆（員工當日有核准排休）'
+        result['warning'] = f'已指派 {created} 筆,跳過 {len(blocked)} 筆(員工當日有核准排休)'
         result['blocked'] = blocked
     return jsonify(result), 201
 
@@ -2623,10 +2628,10 @@ def api_shift_assignment_batch_delete():
 @require_module('sched')
 def api_shift_import():
     """
-    匯入班表 CSV 或 Excel (.xlsx)。
-    表頭（第一列）：姓名,日期,班別,備註  或  代碼,日期,班別,備註
-    日期格式：YYYY-MM-DD
-    force=1 query param 可強制覆蓋排休衝突。
+    匯入班表 CSV 或 Excel (.xlsx).
+    表頭(第一列):姓名,日期,班別,備註  或  代碼,日期,班別,備註
+    日期格式:YYYY-MM-DD
+    force=1 query param 可強制覆蓋排休衝突.
     """
     import csv, io as _io
     force = request.args.get('force', '0') == '1'
@@ -2684,7 +2689,7 @@ def api_shift_import():
     if '班別' not in all_keys:
         return jsonify({'error': '檔案缺少「班別」欄位'}), 400
     with get_db() as conn:
-        # 預先建立索引，避免逐列查詢
+        # 預先建立索引,避免逐列查詢
         staff_by_name = {r['name']: r['id'] for r in conn.execute(
             "SELECT id, name FROM punch_staff WHERE active=TRUE"
         ).fetchall()}
@@ -2695,7 +2700,7 @@ def api_shift_import():
             "SELECT id, name FROM shift_types WHERE active=TRUE"
         ).fetchall()}
 
-        # 預先讀取所有涉及員工的核准排休（僅在非強制時）
+        # 預先讀取所有涉及員工的核准排休(僅在非強制時)
         leave_lookup = {}   # { staff_id: set(date_str) }
         if not force:
             leave_rows = conn.execute("""
@@ -2713,10 +2718,10 @@ def api_shift_import():
                 leave_lookup[sid].update(dates_val or [])
 
         created = 0
-        skipped = []   # 衝突（排休）
+        skipped = []   # 衝突(排休)
         errors  = []   # 找不到員工/班別、日期格式錯誤
 
-        for i, row in enumerate(rows, start=2):   # 從第2列計算（第1列是表頭）
+        for i, row in enumerate(rows, start=2):   # 從第2列計算(第1列是表頭)
             name_val = row.get('姓名', '').strip()
             code_val = row.get('代碼', '').strip()
             date_str = row.get('日期', '').strip()
@@ -2730,13 +2735,13 @@ def api_shift_import():
             if staff_id is None and name_val:
                 staff_id = staff_by_name.get(name_val)
             if staff_id is None:
-                errors.append({'row': i, 'reason': f'找不到員工：{code_val or name_val}'})
+                errors.append({'row': i, 'reason': f'找不到員工:{code_val or name_val}'})
                 continue
 
             # 找班別 ID
             shift_id = shift_by_name.get(shift_name)
             if shift_id is None:
-                errors.append({'row': i, 'reason': f'找不到班別：{shift_name}'})
+                errors.append({'row': i, 'reason': f'找不到班別:{shift_name}'})
                 continue
 
             # 驗證日期
@@ -2744,7 +2749,7 @@ def api_shift_import():
                 from datetime import date as _date
                 _date.fromisoformat(date_str)
             except ValueError:
-                errors.append({'row': i, 'reason': f'日期格式錯誤：{date_str}（應為 YYYY-MM-DD）'})
+                errors.append({'row': i, 'reason': f'日期格式錯誤:{date_str}(應為 YYYY-MM-DD)'})
                 continue
 
             # 排休衝突檢查
@@ -2753,7 +2758,7 @@ def api_shift_import():
                 skipped.append({'row': i, 'reason': f'{display} 於 {date_str} 有核准排休'})
                 continue
 
-            # 寫入（衝突則覆蓋）
+            # 寫入(衝突則覆蓋)
             conn.execute("""
                 INSERT INTO shift_assignments (staff_id, shift_type_id, shift_date, note)
                 VALUES (%s,%s,%s,%s)
@@ -2764,9 +2769,9 @@ def api_shift_import():
 
     result = {'created': created, 'skipped': skipped, 'errors': errors}
     if errors or skipped:
-        result['message'] = f'匯入完成：{created} 筆成功，{len(skipped)} 筆排休衝突跳過，{len(errors)} 筆錯誤'
+        result['message'] = f'匯入完成:{created} 筆成功,{len(skipped)} 筆排休衝突跳過,{len(errors)} 筆錯誤'
     else:
-        result['message'] = f'匯入完成：共 {created} 筆排班'
+        result['message'] = f'匯入完成:共 {created} 筆排班'
     return jsonify(result), 201
 
 
@@ -2774,10 +2779,10 @@ def api_shift_import():
 @require_module('sched')
 def api_shift_conflicts():
     """
-    偵測班表衝突與警示：
+    偵測班表衝突與警示:
     - overtime_hours : 單班時數 > 10 小時
-    - midnight_cross : 跨日班別（結束時間 < 開始時間）
-    - consecutive_days : 連續排班 >= 6 天（6天警告，7天以上錯誤）
+    - midnight_cross : 跨日班別(結束時間 < 開始時間)
+    - consecutive_days : 連續排班 >= 6 天(6天警告,7天以上錯誤)
     """
     month = request.args.get('month', '')
     if not month:
@@ -2816,7 +2821,7 @@ def api_shift_conflicts():
                 'date':       str(r['shift_date']),
                 'staff_name': r['staff_name'],
                 'shift_name': r['shift_name'],
-                'message':    f"跨日班別 {str(s)[:5]}～{str(e)[:5]}（共 {hrs:.1f} 小時）",
+                'message':    f"跨日班別 {str(s)[:5]}~{str(e)[:5]}(共 {hrs:.1f} 小時)",
             })
 
         if hrs > 10:
@@ -2826,7 +2831,7 @@ def api_shift_conflicts():
                 'date':       str(r['shift_date']),
                 'staff_name': r['staff_name'],
                 'shift_name': r['shift_name'],
-                'message':    f"單班 {hrs:.1f} 小時，超過 10 小時上限",
+                'message':    f"單班 {hrs:.1f} 小時,超過 10 小時上限",
             })
 
     # ── 連續排班天數 ───────────────────────────────────────────────
@@ -2855,8 +2860,8 @@ def api_shift_conflicts():
                         'shift_name': '',
                         'message':    (
                             f"連續排班 {len(streak)} 天"
-                            f"（{streak[0].isoformat()} ～ {streak[-1].isoformat()}）"
-                            + ('，違反勞基法每 7 日至少休 1 日' if len(streak) >= 7 else '，接近法定上限')
+                            f"({streak[0].isoformat()} ~ {streak[-1].isoformat()})"
+                            + (',違反勞基法每 7 日至少休 1 日' if len(streak) >= 7 else ',接近法定上限')
                         ),
                     })
                 streak = [dates[i]]
@@ -2871,8 +2876,8 @@ def api_shift_conflicts():
                 'shift_name': '',
                 'message':    (
                     f"連續排班 {len(streak)} 天"
-                    f"（{streak[0].isoformat()} ～ {streak[-1].isoformat()}）"
-                    + ('，違反勞基法每 7 日至少休 1 日' if len(streak) >= 7 else '，接近法定上限')
+                    f"({streak[0].isoformat()} ~ {streak[-1].isoformat()})"
+                    + (',違反勞基法每 7 日至少休 1 日' if len(streak) >= 7 else ',接近法定上限')
                 ),
             })
 
@@ -3060,7 +3065,7 @@ def api_ot_submit():
     except ValueError:
         return jsonify({'error': '時間格式錯誤'}), 400
     if ot_hours <= 0 or ot_hours > 12:
-        return jsonify({'error': '加班時數不合理（0~12小時）'}), 400
+        return jsonify({'error': '加班時數不合理(0~12小時)'}), 400
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO overtime_requests
@@ -3171,12 +3176,12 @@ def api_ot_review(rid):
     result = ot_req_row(row)
     result['staff_name'] = sn['name'] if sn else ''
     # LINE notification
-    time_str = (f"{row['start_time']}～{row['end_time']}" if row.get('start_time') and row.get('end_time')
+    time_str = (f"{row['start_time']}~{row['end_time']}" if row.get('start_time') and row.get('end_time')
                 else f"{float(row['ot_hours'])} 小時")
     extra = f"{row['request_date']} {time_str}"
     if action == 'approve' and float(row.get('ot_pay') or 0) > 0:
-        extra += f"\n加班費：${float(row['ot_pay']):,.0f}"
-    if review_note: extra += f"\n審核意見：{review_note}"
+        extra += f"\n加班費:${float(row['ot_pay']):,.0f}"
+    if review_note: extra += f"\n審核意見:{review_note}"
     _notify_review_result(req['staff_id'], '加班申請', action, extra)
     return jsonify(result)
 
@@ -3279,15 +3284,15 @@ def api_ot_calc_preview():
 
 # ═══════════════════════════════════════════════════════════════════
 # Leave Management (請假管理)
-# 2026 勞基法：
-#   特休：到職1年10天、2年15天、3~5年每年+1、滿5年20天(上限)
-#   病假：每年30天(半薪)，超過住院病假 365 天內 30 天(全薪)
-#   事假：每年14天(無薪)
-#   生理假：每月1天(含病假計算，前3天半薪)
-#   婚假：8天全薪
-#   喪假：父母/配偶/子女8天；祖父母/孫子女/兄弟姐妹6天；曾祖父母3天
-#   產假：8週全薪；陪產假：7天全薪
-#   公假：全薪
+# 2026 勞基法:
+#   特休:到職1年10天、2年15天、3~5年每年+1、滿5年20天(上限)
+#   病假:每年30天(半薪),超過住院病假 365 天內 30 天(全薪)
+#   事假:每年14天(無薪)
+#   生理假:每月1天(含病假計算,前3天半薪)
+#   婚假:8天全薪
+#   喪假:父母/配偶/子女8天;祖父母/孫子女/兄弟姐妹6天;曾祖父母3天
+#   產假:8週全薪;陪產假:7天全薪
+#   公假:全薪
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Leave Tables ─────────────────────────────────────────────────────────────
@@ -3400,18 +3405,18 @@ def leave_balance_row(row):
 
 def _calc_annual_leave_days(hire_date_str, ref_date_str=None):
     """
-    勞基法第38條特休天數計算（2017年修正版，現行有效）
+    勞基法第38條特休天數計算(2017年修正版,現行有效)
 
-    到職滿6個月：3天
-    到職滿1年：7天
-    到職滿2年：10天
-    到職滿3年：14天
-    到職滿4年：14天（同第3年）
-    到職滿5年：15天
-    到職滿6～9年：15天（同第5年）
-    到職滿10年起：每年+1天，上限30天
+    到職滿6個月:3天
+    到職滿1年:7天
+    到職滿2年:10天
+    到職滿3年:14天
+    到職滿4年:14天(同第3年)
+    到職滿5年:15天
+    到職滿6~9年:15天(同第5年)
+    到職滿10年起:每年+1天,上限30天
 
-    回傳當期應給特休天數（整數）
+    回傳當期應給特休天數(整數)
     """
     if not hire_date_str:
         return 0
@@ -3428,15 +3433,15 @@ def _calc_annual_leave_days(hire_date_str, ref_date_str=None):
         except Exception:
             pass
 
-    # 計算到職滿幾個月（以完整月份計）
+    # 計算到職滿幾個月(以完整月份計)
     months = (ref.year - hire.year) * 12 + (ref.month - hire.month)
-    # 若當月日期未到到職日，扣一個月
+    # 若當月日期未到到職日,扣一個月
     if ref.day < hire.day:
         months -= 1
     if months < 0:
         months = 0
 
-    # 正確換算年數（以整月為準）
+    # 正確換算年數(以整月為準)
     years_complete = months // 12
     months_extra   = months % 12
 
@@ -3444,31 +3449,31 @@ def _calc_annual_leave_days(hire_date_str, ref_date_str=None):
     if months < 6:
         return 0
     elif months < 12:
-        # 滿6個月未滿1年：3天
+        # 滿6個月未滿1年:3天
         return 3
     elif years_complete < 2:
-        # 滿1年未滿2年：7天
+        # 滿1年未滿2年:7天
         return 7
     elif years_complete < 3:
-        # 滿2年未滿3年：10天
+        # 滿2年未滿3年:10天
         return 10
     elif years_complete < 5:
-        # 滿3年未滿5年：14天
+        # 滿3年未滿5年:14天
         return 14
     elif years_complete < 10:
-        # 滿5年未滿10年：15天
+        # 滿5年未滿10年:15天
         return 15
     else:
-        # 滿10年：16天，之後每年+1，上限30天
-        # years_complete=10 → extra=1 → 15+1=16 ✓
+        # 滿10年:16天,之後每年+1,上限30天
+        # years_complete=10 -> extra=1 -> 15+1=16 ✓
         extra = years_complete - 9
         return min(15 + extra, 30)
 
 
 def _calc_annual_leave_schedule(hire_date_str):
     """
-    回傳員工特休天數完整排程表，供前端顯示用。
-    每一列：{ label, days, date_reached, is_past, is_current }
+    回傳員工特休天數完整排程表,供前端顯示用.
+    每一列:{ label, days, date_reached, is_past, is_current }
     """
     if not hire_date_str:
         return []
@@ -3498,7 +3503,7 @@ def _calc_annual_leave_schedule(hire_date_str):
         (204,23,  '滿17年'),
         (216,24,  '滿18年'),
         (228,25,  '滿19年'),
-        (240,30,  '滿20年（上限30天）'),
+        (240,30,  '滿20年(上限30天)'),
     ]
 
     result      = []
@@ -3525,7 +3530,7 @@ def _calc_annual_leave_schedule(hire_date_str):
     return result
 
 def _get_staff_scheduled_dates(conn, staff_id, start_date_str, end_date_str):
-    """取得員工在日期範圍內的排班日集合；無排班記錄則回傳 None（由呼叫方決定備援邏輯）"""
+    """取得員工在日期範圍內的排班日集合;無排班記錄則回傳 None(由呼叫方決定備援邏輯)"""
     rows = conn.execute("""
         SELECT DISTINCT shift_date FROM shift_assignments
         WHERE staff_id=%s AND shift_date BETWEEN %s AND %s
@@ -3537,8 +3542,8 @@ def _get_staff_scheduled_dates(conn, staff_id, start_date_str, end_date_str):
 
 def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False,
                      scheduled_dates=None):
-    """計算請假天數（含半天選項）。
-    有排班時以 scheduled_dates 為準；無排班備援排除週六日。"""
+    """計算請假天數(含半天選項).
+    有排班時以 scheduled_dates 為準;無排班備援排除週六日."""
     from datetime import date as _date, timedelta as _tdd
     try:
         s = _date.fromisoformat(start_date_str)
@@ -3553,7 +3558,7 @@ def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=Fa
                      else (cur.weekday() < 5)
         if is_workday:
             if cur == s and cur == e:
-                # 單日：兩個 half 旗標都打表示上午半天（0.5天）；只有 end_half 表示下午半天（0.5天）
+                # 單日:兩個 half 旗標都打表示上午半天(0.5天);只有 end_half 表示下午半天(0.5天)
                 if start_half or end_half:
                     days += 0.5
                 else:
@@ -3677,7 +3682,7 @@ def api_leave_request_admin_create():
         total_days = _calc_leave_days(start_date, end_date, start_half, end_half,
                                       scheduled_dates=sched)
         if total_days <= 0:
-            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+            return jsonify({'error': '請假天數不合理,請檢查日期'}), 400
 
         row = conn.execute("""
             INSERT INTO leave_requests
@@ -3715,13 +3720,13 @@ def api_leave_request_review(rid):
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], float(old['total_days']))
         elif action == 'reject' and old['status'] == 'approved':
-            # 原本已核准 → 現在駁回，需還原假別額度
+            # 原本已核准 -> 現在駁回,需還原假別額度
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], -float(old['total_days']))
         _trigger_salary_regen_for_leave(conn, old['staff_id'], str(old['start_date'])[:7])
     if row:
         extra = f"{str(old['start_date'])} ~ {str(old['end_date'])} 共 {float(old['total_days'])} 天"
-        if review_note: extra += f"\n審核意見：{review_note}"
+        if review_note: extra += f"\n審核意見:{review_note}"
         _notify_review_result(old['staff_id'], '請假申請', action, extra)
     return jsonify(leave_req_row(row)) if row else ('', 404)
 
@@ -3739,7 +3744,7 @@ def api_leave_request_delete(rid):
     return jsonify({'deleted': rid})
 
 def _trigger_salary_regen_for_leave(conn, staff_id, month):
-    """請假/加班狀態異動後，若該月已有薪資草稿則自動重算"""
+    """請假/加班狀態異動後,若該月已有薪資草稿則自動重算"""
     try:
         existing = conn.execute(
             "SELECT status FROM salary_records WHERE staff_id=%s AND month=%s",
@@ -3824,9 +3829,9 @@ def api_leave_submit():
         total_days = _calc_leave_days(start_date, end_date, start_half, end_half,
                                       scheduled_dates=sched)
         if total_days <= 0:
-            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+            return jsonify({'error': '請假天數不合理,請檢查日期'}), 400
 
-        # Check balance for types with limits
+        # Check balance for types with limits (include pending requests)
         lt = conn.execute("SELECT * FROM leave_types WHERE id=%s", (leave_type_id,)).fetchone()
         if lt and lt['max_days'] is not None:
             year = start_date[:4]
@@ -3836,9 +3841,16 @@ def api_leave_submit():
                 WHERE staff_id=%s AND leave_type_id=%s AND year=%s
             """, (sid, leave_type_id, year)).fetchone()
             used = float(bal['used']) if bal else 0.0
+            pending = conn.execute("""
+                SELECT COALESCE(SUM(total_days),0) as pending
+                FROM leave_requests
+                WHERE staff_id=%s AND leave_type_id=%s
+                  AND EXTRACT(YEAR FROM start_date)=%s AND status='pending'
+            """, (sid, leave_type_id, int(year))).fetchone()
+            used += float(pending['pending']) if pending else 0.0
             if used + total_days > float(lt['max_days']):
                 remaining = float(lt['max_days']) - used
-                return jsonify({'error': f'{lt["name"]}剩餘 {remaining} 天，無法申請 {total_days} 天'}), 422
+                return jsonify({'error': f'{lt["name"]}剩餘 {remaining} 天,無法申請 {total_days} 天'}), 422
 
         row = conn.execute("""
             INSERT INTO leave_requests
@@ -3853,11 +3865,11 @@ def api_leave_submit():
 
 @app.route('/api/leave/balances', methods=['GET'])
 def api_leave_balances():
-    """管理員和員工都可以查詢，員工只能查自己的"""
+    """管理員和員工都可以查詢,員工只能查自己的"""
     year     = request.args.get('year', '')
     staff_id = request.args.get('staff_id', '')
 
-    # 員工端：只能查自己
+    # 員工端:只能查自己
     if not session.get('logged_in'):
         sid = session.get('punch_staff_id')
         if not sid:
@@ -3892,7 +3904,7 @@ def api_leave_balances():
 @app.route('/api/leave/balances/init', methods=['POST'])
 @require_module('leave')
 def api_leave_balance_init():
-    """初始化/更新員工特休天數（依勞基法第38條，以到職日精確計算）"""
+    """初始化/更新員工特休天數(依勞基法第38條,以到職日精確計算)"""
     b    = request.get_json(force=True)
     year = b.get('year', '')
     if not year:
@@ -3911,7 +3923,7 @@ def api_leave_balance_init():
 
         for s in staff_list:
             days = _calc_annual_leave_days(s['hire_date'])
-            # 未滿6個月的員工也記錄（0天），方便後續追蹤
+            # 未滿6個月的員工也記錄(0天),方便後續追蹤
             conn.execute("""
                 INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
                 VALUES (%s,%s,%s,%s,0)
@@ -3931,7 +3943,7 @@ def api_leave_balance_init():
 @app.route('/api/leave/annual-schedule/<int:staff_id>', methods=['GET'])
 @require_module('leave')
 def api_annual_leave_schedule(staff_id):
-    """回傳員工特休天數完整排程（各里程碑日期與天數）"""
+    """回傳員工特休天數完整排程(各里程碑日期與天數)"""
     with get_db() as conn:
         staff = conn.execute(
             "SELECT name, hire_date FROM punch_staff WHERE id=%s", (staff_id,)
@@ -3988,7 +4000,7 @@ def api_leave_balance_update(bid):
 @app.route('/api/leave/summary/<int:staff_id>/<month>', methods=['GET'])
 @require_module('leave')
 def api_leave_summary(staff_id, month):
-    """取得員工某月請假摘要（供薪資計算用）"""
+    """取得員工某月請假摘要(供薪資計算用)"""
     with get_db() as conn:
         _d_s, _d_e = _month_date_range(month)
         rows = conn.execute("""
@@ -4029,11 +4041,11 @@ def api_leave_summary(staff_id, month):
 
 # ═══════════════════════════════════════════════════════════════════
 # Salary Management (薪資管理)
-# 2026 勞基法：
-#   勞保費率 10.5%（員工負擔 20%=2.1%，含就業保險）
-#   健保費率 5.17%（員工負擔 30%=1.551%）
-#   勞退提撥 6%（雇主強制提撥，員工自願另計）
-#   最低工資 2026年 NT$28,590（月薪）
+# 2026 勞基法:
+#   勞保費率 10.5%(員工負擔 20%=2.1%,含就業保險)
+#   健保費率 5.17%(員工負擔 30%=1.551%)
+#   勞退提撥 6%(雇主強制提撥,員工自願另計)
+#   最低工資 2026年 NT$28,590(月薪)
 # ═══════════════════════════════════════════════════════════════════
 
 def init_salary_db():
@@ -4133,7 +4145,7 @@ def salary_record_row(row):
     return d
 
 def _eval_formula(formula, base_salary, insured_salary, service_years, extra_vars=None):
-    """安全計算薪資公式（使用 ast 解析，禁止任意程式碼執行）"""
+    """安全計算薪資公式(使用 ast 解析,禁止任意程式碼執行)"""
     import ast as _ast
     if not formula: return 0.0
     ctx = {
@@ -4198,7 +4210,7 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra_var
         result = _safe_eval(tree)
         return round(float(result), 2)
     except Exception as _fe:
-        print(f"[formula_error] 公式計算失敗：{formula!r}  原因：{_fe}")
+        print(f"[formula_error] 公式計算失敗:{formula!r}  原因:{_fe}")
         return 0.0
 
 def _calc_service_years(hire_date_str):
@@ -4212,8 +4224,8 @@ def _calc_service_years(hire_date_str):
 
 def _calc_punch_hours(conn, staff_id, month):
     """
-    從打卡記錄計算實際工時（時薪制用）
-    邏輯：每天找最早 in + 最晚 out，扣除休息時間
+    從打卡記錄計算實際工時(時薪制用)
+    邏輯:每天找最早 in + 最晚 out,扣除休息時間
     回傳 (total_hours, work_days, details)
     """
     from datetime import datetime as _dth, timezone as _tzh, timedelta as _tdh
@@ -4240,7 +4252,7 @@ def _calc_punch_hours(conn, staff_id, month):
             day_map[ds] = []
         day_map[ds].append({'type': r['punch_type'], 'dt': pa_tw})
 
-    # 跨日班次合併：day N 有上班無下班 + day N+1 有下班無上班 → 歸入 day N
+    # 跨日班次合併:day N 有上班無下班 + day N+1 有下班無上班 -> 歸入 day N
     from datetime import date as _dch, timedelta as _tdch
     for _d1 in sorted(day_map.keys()):
         _d2 = (_dch.fromisoformat(_d1) + _tdch(days=1)).isoformat()
@@ -4298,8 +4310,8 @@ def _calc_punch_hours(conn, staff_id, month):
 def _auto_generate_salary(conn, staff, month, work_days=None):
     """
     自動產生員工月薪資料
-    ─ 月薪制：底薪 + 薪資項目公式 + 加班費 - 請假扣款
-    ─ 時薪制：打卡實際工時 × 時薪 + 加班費 - 請假扣款
+    ─ 月薪制:底薪 + 薪資項目公式 + 加班費 - 請假扣款
+    ─ 時薪制:打卡實際工時 × 時薪 + 加班費 - 請假扣款
     """
     import calendar as _cal2
     from datetime import date as _d5, timedelta as _td5, datetime as _dts5, timezone as _tz5
@@ -4323,7 +4335,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             scheduled_dates = {r['shift_date'].isoformat() if hasattr(r['shift_date'], 'isoformat') else str(r['shift_date']) for r in shift_date_rows}
             total_work_days = len(scheduled_dates)
         else:
-            # 2. 備援：日曆扣除週日 + 國定假日
+            # 2. 備援:日曆扣除週日 + 國定假日
             holiday_rows = conn.execute("""
                 SELECT date FROM public_holidays
                 WHERE date >= %s AND date < %s
@@ -4344,7 +4356,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     daily_hours    = float(staff.get('daily_hours')    or 8)
     service_years  = _calc_service_years(staff.get('hire_date'))
 
-    # ── 時薪制：從打卡記錄計算工時 ──────────────────────────
+    # ── 時薪制:從打卡記錄計算工時 ──────────────────────────
     actual_work_hours = 0.0
     punch_details     = []
     if salary_type == 'hourly':
@@ -4354,7 +4366,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         # 時薪制的 base_salary 等於 實際工時 × 時薪
         hourly_base_pay = round(actual_work_hours * hourly_rate, 2)
     else:
-        # 月薪制：daily_wage 用於請假扣款
+        # 月薪制:daily_wage 用於請假扣款
         hourly_base_pay = 0.0
 
     # ── 已核准加班費 ────────────────────────────────────────
@@ -4379,7 +4391,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     half_pay_days = sum(float(r['total_days']) for r in leave_rows if 0 < float(r['pay_rate']) < 1)
     actual_days   = total_work_days - leave_days
 
-    # 全天請假（start_time 為空）才計入全勤判斷，小時請假不影響全勤
+    # 全天請假(start_time 為空)才計入全勤判斷,小時請假不影響全勤
     full_day_rows  = [r for r in leave_rows if not (r['start_time'] or '').strip()]
     fd_leave_days  = sum(float(r['total_days']) for r in full_day_rows)
     personal_days  = sum(float(r['total_days']) for r in full_day_rows
@@ -4387,7 +4399,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     sick_days      = sum(float(r['total_days']) for r in full_day_rows
                          if '病假' in (r['leave_name'] or '') or (r['code'] or '').startswith('sick'))
 
-    # ── 日薪 / 時薪（用於請假扣款） ───────────────────────
+    # ── 日薪 / 時薪(用於請假扣款) ───────────────────────
     if salary_type == 'hourly':
         daily_wage  = hourly_rate * daily_hours   # 時薪制日薪 = 時薪 × 每日工時
         hourly_wage = hourly_rate
@@ -4395,7 +4407,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         daily_wage  = base_salary / 30 if base_salary > 0 else 0
         hourly_wage = daily_wage / daily_hours if daily_hours > 0 else 0
 
-    # ── 月薪制：提前計算缺勤天數，讓 _attendance_vars 中 actual_days 正確 ──
+    # ── 月薪制:提前計算缺勤天數,讓 _attendance_vars 中 actual_days 正確 ──
     absent_days      = 0
     absent_date_list = []
     if salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
@@ -4428,7 +4440,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         absent_days = len(absent_date_list)
     actual_days = max(0, actual_days - absent_days)
 
-    # 公式可用的出勤變數（leave_days/personal_days/sick_days 只計全天請假，小時請假不影響全勤）
+    # 公式可用的出勤變數(leave_days/personal_days/sick_days 只計全天請假,小時請假不影響全勤)
     _attendance_vars = {
         'actual_days':   float(actual_days),
         'work_days':     float(total_work_days),
@@ -4450,26 +4462,26 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         except Exception: _overrides = {}
 
     def _apply_override(item_id, calculated_amt):
-        """若員工設有個人金額，使用個人金額；否則使用計算值"""
+        """若員工設有個人金額,使用個人金額;否則使用計算值"""
         key = str(item_id)
         if key in _overrides and _overrides[key] is not None and _overrides[key] != '':
             return float(_overrides[key]), True   # (amount, is_overridden)
         return calculated_amt, False
 
     if salary_type == 'hourly':
-        # 時薪制：第一筆項目是「本薪（工時計算）」
+        # 時薪制:第一筆項目是「本薪(工時計算)」
         items.append({
-            'id': 'hourly_base', 'name': '本薪（工時）', 'type': 'allowance',
+            'id': 'hourly_base', 'name': '本薪(工時)', 'type': 'allowance',
             'amount': hourly_base_pay, 'formula': '',
             'calc_note': (
                 f'{actual_work_hours}h × 時薪${hourly_rate}'
-                + (f'（{len(punch_details)}天出勤）' if punch_details else '')
+                + (f'({len(punch_details)}天出勤)' if punch_details else '')
             ),
         })
         allowance_total += hourly_base_pay
 
-        # 時薪制加班費（從打卡計算，若無申請記錄則估算）
-        # 先用「加班申請」核准金額；若為 0 則嘗試從工時估算
+        # 時薪制加班費(從打卡計算,若無申請記錄則估算)
+        # 先用「加班申請」核准金額;若為 0 則嘗試從工時估算
         if ot_pay == 0 and actual_work_hours > 0:
             # 每天超過 daily_hours 的部分算加班
             for pd in punch_details:
@@ -4481,11 +4493,11 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                     rate2 = float(staff.get('ot_rate2') or 1.67)
                     ot_pay += round(hourly_rate * (h1 * rate1 + h2 * rate2), 2)
 
-        # 時薪制的保險費以 insured_salary 為準（若未設定則用月薪換算）
+        # 時薪制的保險費以 insured_salary 為準(若未設定則用月薪換算)
         if insured_salary == 0:
             insured_salary = round(hourly_rate * daily_hours * 30, 0)
 
-        # 時薪制只加入保險類扣除項（若員工有指定則只取指定中的保險項）
+        # 時薪制只加入保險類扣除項(若員工有指定則只取指定中的保險項)
         staff_item_ids = staff.get('salary_item_ids')
         if staff_item_ids:
             placeholders = ','.join(['%s'] * len(staff_item_ids))
@@ -4517,7 +4529,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             deduction_total += amt
 
     else:
-        # 月薪制：跑啟用的薪資項目（若員工有指定則只跑指定項目）
+        # 月薪制:跑啟用的薪資項目(若員工有指定則只跑指定項目)
         staff_item_ids = staff.get('salary_item_ids')
         if staff_item_ids:
             placeholders = ','.join(['%s'] * len(staff_item_ids))
@@ -4549,10 +4561,10 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             else:
                 deduction_total += amt
 
-    # ── 加班費（申請核准） ──────────────────────────────────
+    # ── 加班費(申請核准) ──────────────────────────────────
     if ot_pay > 0:
         items.append({
-            'id': 'ot', 'name': '加班費（申請）', 'type': 'allowance',
+            'id': 'ot', 'name': '加班費(申請)', 'type': 'allowance',
             'amount': round(ot_pay, 2), 'formula': '',
             'calc_note': '核准加班費合計',
         })
@@ -4565,13 +4577,13 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         ))
         deduct = round(daily_wage * unpaid_days, 2)
         items.append({
-            'id': 'unpaid', 'name': f'無薪假扣款（{leave_names}）', 'type': 'deduction',
+            'id': 'unpaid', 'name': f'無薪假扣款({leave_names})', 'type': 'deduction',
             'amount': deduct, 'formula': '',
             'calc_note': f'{unpaid_days}天 × 日薪${round(daily_wage, 0)}',
         })
         deduction_total += deduct
 
-    # 半薪假：依各假別的 pay_rate 分組計算，扣款 = daily_wage × 天數 × (1 - pay_rate)
+    # 半薪假:依各假別的 pay_rate 分組計算,扣款 = daily_wage × 天數 × (1 - pay_rate)
     if half_pay_days > 0 and daily_wage > 0:
         from collections import defaultdict as _dd
         _hp_groups = _dd(lambda: {'days': 0.0, 'names': set()})
@@ -4587,20 +4599,20 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 leave_names = '、'.join(grp['names'])
                 items.append({
                     'id': f'halfpay_{int(pr*100)}',
-                    'name': f'半薪假扣款（{leave_names}）', 'type': 'deduction',
+                    'name': f'半薪假扣款({leave_names})', 'type': 'deduction',
                     'amount': deduct, 'formula': '',
                     'calc_note': f"{grp['days']}天 × 日薪${round(daily_wage, 0)} × {deduct_rate:.0%}",
                 })
                 deduction_total += deduct
 
-    # ── 月薪制：缺勤扣款項目（absent_days 已在 _attendance_vars 前計算完畢） ──
+    # ── 月薪制:缺勤扣款項目(absent_days 已在 _attendance_vars 前計算完畢) ──
     if absent_days > 0 and daily_wage > 0:
         deduct = round(daily_wage * absent_days, 2)
         sample = '、'.join(absent_date_list[:3]) + ('等' if absent_days > 3 else '')
         items.append({
-            'id': 'absent', 'name': f'缺勤扣款（{absent_days} 天）', 'type': 'deduction',
+            'id': 'absent', 'name': f'缺勤扣款({absent_days} 天)', 'type': 'deduction',
             'amount': deduct, 'formula': '',
-            'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}（{sample}）',
+            'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}({sample})',
         })
         deduction_total += deduct
 
@@ -4625,7 +4637,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'deduction_total':    round(deduction_total, 2),
         'net_pay':            net_pay,
         'items':              items,
-        'punch_details':      punch_details,   # 時薪制：每日打卡明細
+        'punch_details':      punch_details,   # 時薪制:每日打卡明細
         'status':             'draft',
     }
 
@@ -4649,7 +4661,7 @@ def api_my_payslip():
             WHERE sr.staff_id = %s AND sr.month = %s
         """, (sid, month)).fetchone()
     if not row:
-        return jsonify({'error': f'{month} 尚無薪資記錄，請聯絡管理員'}), 404
+        return jsonify({'error': f'{month} 尚無薪資記錄,請聯絡管理員'}), 404
     d = salary_record_row(row)
     d['staff_name']    = row['staff_name']
     d['staff_role']    = row['staff_role']
@@ -4738,18 +4750,18 @@ def api_salary_generate():
     b     = request.get_json(force=True)
     month = b.get('month', '').strip()
     if not month: return jsonify({'error': '請指定月份'}), 400
-    # 防止同一月份並發產生：用 PostgreSQL advisory lock
-    # lock key = classid 9999 + YYYYMM（如 202504），transaction 結束自動釋放
+    # 防止同一月份並發產生:用 PostgreSQL advisory lock
+    # lock key = classid 9999 + YYYYMM(如 202504),transaction 結束自動釋放
     try:
-        _lock_month = int(month.replace('-', ''))  # e.g. '2025-04' → 202504
+        _lock_month = int(month.replace('-', ''))  # e.g. '2025-04' -> 202504
     except ValueError:
-        return jsonify({'error': '月份格式錯誤，請使用 YYYY-MM'}), 400
+        return jsonify({'error': '月份格式錯誤,請使用 YYYY-MM'}), 400
     with get_db() as conn:
         locked = conn.execute(
             "SELECT pg_try_advisory_xact_lock(9999, %s) AS ok", (_lock_month,)
         ).fetchone()
         if not locked or not locked['ok']:
-            return jsonify({'error': f'{month} 薪資產生已在進行中，請稍後再試'}), 409
+            return jsonify({'error': f'{month} 薪資產生已在進行中,請稍後再試'}), 409
         staff_list = conn.execute(
             "SELECT * FROM punch_staff WHERE active=TRUE"
         ).fetchall()
@@ -4819,7 +4831,7 @@ def api_salary_record_update(rid):
             UPDATE salary_records SET
               allowance_total=%s, deduction_total=%s, net_pay=%s,
               items=%s::jsonb, note=%s, updated_at=NOW()
-            WHERE id=%s RETURNING *
+            WHERE id=%s AND status != 'confirmed' RETURNING *
         """, (float(b.get('allowance_total',0)), float(b.get('deduction_total',0)),
               float(b.get('net_pay',0)), items_json,
               b.get('note',''), rid)).fetchone()
@@ -4841,7 +4853,7 @@ def api_salary_confirm_all():
         """, (by, month)).fetchall()
     confirmed = len(rows)
     for row in rows:
-        extra = f"{row['month']} 薪資已確認\n實領金額：${float(row['net_pay'] or 0):,.0f}"
+        extra = f"{row['month']} 薪資已確認\n實領金額:${float(row['net_pay'] or 0):,.0f}"
         _notify_review_result(row['staff_id'], '薪資', 'confirmed', extra)
     return jsonify({'ok': True, 'confirmed': confirmed})
 
@@ -4856,7 +4868,7 @@ def api_salary_confirm(rid):
             WHERE id=%s RETURNING *
         """, (b.get('confirmed_by','管理員'), rid)).fetchone()
     if row:
-        extra = f"{row['month']} 薪資已確認\n實領金額：${float(row['net_pay'] or 0):,.0f}"
+        extra = f"{row['month']} 薪資已確認\n實領金額:${float(row['net_pay'] or 0):,.0f}"
         _notify_review_result(row['staff_id'], '薪資', 'confirmed', extra)
     return jsonify(salary_record_row(row)) if row else ('', 404)
 
@@ -4927,6 +4939,9 @@ def api_salary_staff_update(sid):
               (b.get('address') or '').strip(),
               sid))
         row = conn.execute("SELECT * FROM punch_staff WHERE id=%s", (sid,)).fetchone()
+        from datetime import datetime as _dt_now
+        current_month = _dt_now.now(TW_TZ).strftime('%Y-%m')
+        _trigger_salary_regen_for_leave(conn, sid, current_month)
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 
 
@@ -5058,7 +5073,7 @@ def api_ann_public():
             ORDER BY is_pinned DESC, published_at DESC
             LIMIT 50
         """).fetchall()
-        # 增加閱讀計數（批次）
+        # 增加閱讀計數(批次)
     return jsonify([ann_row(r) for r in rows])
 
 @app.route('/api/announcements/<int:aid>/view', methods=['POST'])
@@ -5283,7 +5298,7 @@ def _notify_review_result(staff_id, category, action, extra_info=''):
     ACTION_ICON  = {'approved': '[核准]', 'rejected': '[退回]', 'confirmed': '[確認]'}
     label = ACTION_LABEL.get(action, action)
     icon  = ACTION_ICON.get(action, '')
-    msg   = f"{icon} {category}{label}\n{extra_info}\n\n請至員工系統查看詳情。"
+    msg   = f"{icon} {category}{label}\n{extra_info}\n\n請至員工系統查看詳情."
     _notify_staff_line(staff_id, msg.strip())
 
 
@@ -5364,7 +5379,7 @@ def api_export_attendance():
 @app.route('/api/export/attendance-summary', methods=['GET'])
 @login_required
 def api_export_attendance_summary():
-    """匯出月度出勤摘要 CSV（每人每天工時）"""
+    """匯出月度出勤摘要 CSV(每人每天工時)"""
     month = request.args.get('month', '')
     if not month:
         from datetime import date as _df
@@ -5428,7 +5443,7 @@ def api_export_attendance_summary():
 @app.route('/api/attendance/anomaly-report', methods=['GET'])
 @login_required
 def api_anomaly_report_excel():
-    """匯出出勤異常報告 Excel（缺打卡、遲到、早退）"""
+    """匯出出勤異常報告 Excel(缺打卡、遲到、早退)"""
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from io import BytesIO
@@ -5519,7 +5534,7 @@ def api_anomaly_report_excel():
                 sh_s_m = int(sh_s[:2])*60 + int(sh_s[3:5])
                 if ci_m - sh_s_m > 10:
                     late_min = ci_m - sh_s_m
-                    anomaly_type = '遲到'; detail = f"應 {sh_s}，實際 {ci_t}（+{late_min}分）"
+                    anomaly_type = '遲到'; detail = f"應 {sh_s},實際 {ci_t}(+{late_min}分)"
             except Exception:
                 pass
             if not anomaly_type:
@@ -5528,7 +5543,7 @@ def api_anomaly_report_excel():
                     sh_e_m = int(sh_e[:2])*60 + int(sh_e[3:5])
                     if sh_e_m - co_m > 15:
                         early_min = sh_e_m - co_m
-                        anomaly_type = '早退'; detail = f"應 {sh_e}，實際 {co_t}（-{early_min}分）"
+                        anomaly_type = '早退'; detail = f"應 {sh_e},實際 {co_t}(-{early_min}分)"
                 except Exception:
                     pass
 
@@ -5537,10 +5552,10 @@ def api_anomaly_report_excel():
                 'staff_name':  r['staff_name'],
                 'department':  r['department'] or '',
                 'date':        ds,
-                'shift_start': str(shift['start_time'])[:5] if shift else '—',
-                'shift_end':   str(shift['end_time'])[:5]   if shift else '—',
-                'clock_in':    str(r['clock_in'])[11:16]  if r['clock_in']  else '—',
-                'clock_out':   str(r['clock_out'])[11:16] if r['clock_out'] else '—',
+                'shift_start': str(shift['start_time'])[:5] if shift else '-',
+                'shift_end':   str(shift['end_time'])[:5]   if shift else '-',
+                'clock_in':    str(r['clock_in'])[11:16]  if r['clock_in']  else '-',
+                'clock_out':   str(r['clock_out'])[11:16] if r['clock_out'] else '-',
                 'anomaly_type': anomaly_type,
                 'detail':       detail,
             })
@@ -5740,14 +5755,14 @@ def api_punch_req_review_v2(rid):
                   (staff_id, punch_type, punched_at, note, is_manual, manual_by)
                 VALUES (%s,%s,%s,%s,TRUE,%s)
             """, (row['staff_id'], row['punch_type'], row['requested_at'],
-                  f'補打卡申請 #{rid}：{row["reason"]}', reviewed_by))
+                  f'補打卡申請 #{rid}:{row["reason"]}', reviewed_by))
             punch_month = str(row['requested_at'])[:7]
             _trigger_salary_regen_for_leave(conn, row['staff_id'], punch_month)
     # LINE notification
     LABEL = {'in':'上班打卡','out':'下班打卡','break_out':'休息開始','break_in':'休息結束'}
     dt_str = row['requested_at'].isoformat()[:16].replace('T',' ')
     extra  = f"{LABEL.get(row['punch_type'],'')} {dt_str}"
-    if review_note: extra += f"\n審核意見：{review_note}"
+    if review_note: extra += f"\n審核意見:{review_note}"
     _notify_review_result(row['staff_id'], '補打卡申請', action, extra)
     return jsonify(punch_req_row(row))
 
@@ -5763,7 +5778,7 @@ def api_dashboard():
     TW    = _tz(_tdd(hours=8))
     today = _ddt.now(TW).date()
 
-    # 支援傳入月份參數；預設為當月
+    # 支援傳入月份參數;預設為當月
     req_month = request.args.get('month', '').strip()
     if req_month and len(req_month) == 7:
         month = req_month
@@ -5772,7 +5787,7 @@ def api_dashboard():
             import calendar as _cal_d
             last_day = _cal_d.monthrange(y, m)[1]
             from datetime import date as _dcheck
-            # 如果查詢的是未來月份，today 仍用實際今天
+            # 如果查詢的是未來月份,today 仍用實際今天
         except Exception:
             month = today.strftime('%Y-%m')
     else:
@@ -5801,7 +5816,7 @@ def api_dashboard():
               AND (punched_at AT TIME ZONE 'Asia/Taipei')::date = %s
         """, (today,)).fetchone()['c']
 
-        # 今日請假人數（已核准）
+        # 今日請假人數(已核准)
         on_leave_today = conn.execute("""
             SELECT COUNT(DISTINCT staff_id) as c
             FROM leave_requests
@@ -5809,7 +5824,7 @@ def api_dashboard():
               AND start_date <= %s AND end_date >= %s
         """, (today, today)).fetchone()['c']
 
-        # 今日出勤明細（每人狀態）
+        # 今日出勤明細(每人狀態)
         today_detail_rows = conn.execute("""
             SELECT ps.id, ps.name, ps.role,
                    MAX(CASE WHEN pr.punch_type='in'  THEN to_char(pr.punched_at AT TIME ZONE 'Asia/Taipei','HH24:MI') END) as clock_in,
@@ -5877,7 +5892,7 @@ def api_dashboard():
             FROM salary_records WHERE month=%s
         """, (month,)).fetchone()
 
-        # ── 本月出勤統計（每天出勤人數，用於折線圖）─────────────
+        # ── 本月出勤統計(每天出勤人數,用於折線圖)─────────────
         import calendar as _cal
         days_in_month = _cal.monthrange(today.year, today.month)[1]
         _db_ts_s, _db_ts_e = _month_ts_range(month)
@@ -5903,7 +5918,7 @@ def api_dashboard():
                 'weekday': dt.weekday(),
             })
 
-        # ── 本月請假類型分佈（圓餅圖）───────────────────────────
+        # ── 本月請假類型分佈(圓餅圖)───────────────────────────
         leave_dist_rows = conn.execute("""
             SELECT lt.name, lt.color, COUNT(*) as cnt,
                    COALESCE(SUM(lr.total_days),0) as days
@@ -5919,7 +5934,7 @@ def api_dashboard():
             for r in leave_dist_rows
         ]
 
-        # ── 本月加班費排行（橫條圖）─────────────────────────────
+        # ── 本月加班費排行(橫條圖)─────────────────────────────
         ot_rank_rows = conn.execute("""
             SELECT ps.name, ps.role,
                    COALESCE(SUM(r.ot_pay),0) as total_pay,
@@ -6007,7 +6022,7 @@ def api_dashboard_labor_cost():
 @app.route('/api/dashboard/attendance-heatmap', methods=['GET'])
 @login_required
 def api_dashboard_attendance_heatmap():
-    """本月每日出勤率（熱力圖資料）"""
+    """本月每日出勤率(熱力圖資料)"""
     from datetime import date as _dah
     import calendar as _calh
     month = request.args.get('month', '') or _dah.today().strftime('%Y-%m')
@@ -6104,7 +6119,7 @@ def api_dashboard_leave_distribution():
 @app.route('/api/export/withholding', methods=['GET'])
 @require_module('salary')
 def api_export_withholding():
-    """年度薪資所得扣繳憑單（所得類別50）"""
+    """年度薪資所得扣繳憑單(所得類別50)"""
     from datetime import date as _dwh
     year   = request.args.get('year', str(_dwh.today().year))
     fmt    = request.args.get('format', 'html')
@@ -6139,8 +6154,8 @@ def api_export_withholding():
         data.append({
             'no':          i,
             'name':        r['name'],
-            'national_id': r['national_id'] or '—',
-            'address':     r['address'] or '—',
+            'national_id': r['national_id'] or '-',
+            'address':     r['address'] or '-',
             'gross':       gross,
             'supp_nhi':    supp_nhi(gross, insured),
             'tax':         float(r['tax_withheld']),
@@ -6197,13 +6212,13 @@ tr:nth-child(even){{background:#f8f9fb}}
 @media print{{button{{display:none}}}}
 </style></head><body>
 <button onclick="window.print()" style="margin-bottom:16px;padding:6px 16px;background:#0f1c3a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">列印</button>
-<h2>{year} 年度薪資所得扣繳憑單（所得類別 50）</h2>
-<div class="meta">扣繳義務人：{company_name}　統一編號：{company_tax_id}　地址：{company_address}　製表日期：{_dwh.today().isoformat()}</div>
+<h2>{year} 年度薪資所得扣繳憑單(所得類別 50)</h2>
+<div class="meta">扣繳義務人:{company_name}　統一編號:{company_tax_id}　地址:{company_address}　製表日期:{_dwh.today().isoformat()}</div>
 <table>
 <thead><tr><th>#</th><th>員工姓名</th><th>身分證字號</th><th>地址</th><th>年度薪資合計(元)</th><th>二代健保補充費(元)</th><th>扣繳稅額(元)</th></tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
-<div class="note">※ 本報表依薪資紀錄計算，二代健保補充費 = 超出投保薪資部分 × 2.11%。扣繳稅額請依各月薪資記錄人工確認。</div>
+<div class="note">※ 本報表依薪資紀錄計算,二代健保補充費 = 超出投保薪資部分 × 2.11%.扣繳稅額請依各月薪資記錄人工確認.</div>
 </body></html>"""
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
@@ -6275,7 +6290,7 @@ def _get_edi_staff(staff_ids_str):
 @app.route('/api/export/edi/labor-enroll', methods=['GET'])
 @require_module('salary')
 def api_edi_labor_enroll():
-    """勞工保險加退保申報 EDI（Big5 固定寬度格式）"""
+    """勞工保險加退保申報 EDI(Big5 固定寬度格式)"""
     event_type  = request.args.get('event_type', 'in')   # in=加保 out=退保
     staff_ids   = request.args.get('staff_ids', '')
     event_date  = request.args.get('event_date', '')
@@ -6297,7 +6312,7 @@ def api_edi_labor_enroll():
             event_code +
             insured +
             gender_code +
-            b'00'   # 職業類別（一般）
+            b'00'   # 職業類別(一般)
         )
         lines.append(line)
     content = b'\r\n'.join(lines)
@@ -6479,7 +6494,7 @@ def api_staffing_req_put():
 @app.route('/api/schedule/auto-generate', methods=['POST'])
 @login_required
 def api_auto_generate_schedule():
-    """自動排班引擎：依人力需求與員工可用性生成班表建議"""
+    """自動排班引擎:依人力需求與員工可用性生成班表建議"""
     from datetime import date as _dag, timedelta as _tdag
     import calendar as _calag
 
@@ -6508,7 +6523,7 @@ def api_auto_generate_schedule():
             "SELECT id, name FROM punch_staff WHERE active=TRUE ORDER BY name"
         ).fetchall()
 
-        # 本月已核准休假日期（per staff）
+        # 本月已核准休假日期(per staff)
         leave_rows = conn.execute("""
             SELECT staff_id, start_date, end_date
             FROM leave_requests
@@ -6547,13 +6562,13 @@ def api_auto_generate_schedule():
         for ds in (rdates or []):
             off_days.add((sr['staff_id'], ds))
 
-    # 已有班表 set（不 overwrite 時跳過）
+    # 已有班表 set(不 overwrite 時跳過)
     existing_set = {(r['staff_id'], str(r['shift_date'])) for r in existing}
 
     # 需求 map: {(shift_type_id, day_of_week): required_count}
     req_map = {(r['shift_type_id'], r['day_of_week']): r['required_count'] for r in requirements}
 
-    # 排班計數器（避免連續超時）
+    # 排班計數器(避免連續超時)
     assigned_days  = {s['id']: [] for s in staff_list}  # staff_id -> [date]
     assignments    = []
     conflicts      = []
@@ -6570,17 +6585,17 @@ def api_auto_generate_schedule():
             if needed <= 0:
                 continue
 
-            # 可用員工：未請假、未排休
+            # 可用員工:未請假、未排休
             available = [
                 sid for sid in staff_ids
                 if (sid, ds) not in off_days
             ]
 
-            # 排除已被指派在其他班（同日）
+            # 排除已被指派在其他班(同日)
             already_today = {a['staff_id'] for a in assignments if a['shift_date'] == ds}
             available = [sid for sid in available if sid not in already_today]
 
-            # 排除連續 7 天（含本日）的員工
+            # 排除連續 7 天(含本日)的員工
             def consecutive_days(sid, d):
                 days = sorted(assigned_days[sid])
                 streak = 0
@@ -6592,7 +6607,7 @@ def api_auto_generate_schedule():
 
             available_ok = [sid for sid in available if consecutive_days(sid, ds) < 6]
 
-            # 按本月已排天數升序（均衡分配）
+            # 按本月已排天數升序(均衡分配)
             available_ok.sort(key=lambda sid: len(assigned_days[sid]))
 
             assigned_count = 0
@@ -6617,7 +6632,7 @@ def api_auto_generate_schedule():
                     'type':   'understaffed',
                     'date':   ds,
                     'shift':  st['name'],
-                    'detail': f'{ds} {st["name"]} 需要 {needed} 人，僅能排 {assigned_count} 人',
+                    'detail': f'{ds} {st["name"]} 需要 {needed} 人,僅能排 {assigned_count} 人',
                 })
 
     # 寫入資料庫
@@ -6668,7 +6683,7 @@ if __name__ == '__main__':
 @app.route('/api/salary/records/<int:rid>/pdf', methods=['GET'])
 @require_module('salary')
 def api_salary_pdf(rid):
-    """回傳薪資單 HTML（供瀏覽器列印/另存 PDF）"""
+    """回傳薪資單 HTML(供瀏覽器列印/另存 PDF)"""
     # 允許員工查看自己的薪資單
     if not session.get('logged_in'):
         sid = session.get('punch_staff_id')
@@ -6735,15 +6750,15 @@ def api_salary_pdf(rid):
           <tfoot><tr><td colspan="4"><strong>合計</strong></td><td class="num"><strong>{d.get('actual_work_hours',0)} h</strong></td></tr></tfoot>
         </table>"""
 
-    status_str = '已確認' if row['status'] == 'confirmed' else '草稿（未確認）'
+    status_str = '已確認' if row['status'] == 'confirmed' else '草稿(未確認)'
     sal_type   = '時薪制' if is_hourly else '月薪制'
     attend_str = (f"實際工時 {d.get('actual_work_hours',0)}h × 時薪 ${float(row['hourly_rate'] or 0):,.0f}"
                   if is_hourly else
                   f"出勤 {d.get('actual_days',0)} 天 / 工作日 {d.get('work_days',0)} 天")
     if float(d.get('leave_days',0)) > 0:
-        attend_str += f"，請假 {d.get('leave_days',0)} 天"
+        attend_str += f",請假 {d.get('leave_days',0)} 天"
     if float(d.get('unpaid_days',0)) > 0:
-        attend_str += f"（無薪 {d.get('unpaid_days',0)} 天）"
+        attend_str += f"(無薪 {d.get('unpaid_days',0)} 天)"
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-Hant">
@@ -6809,8 +6824,8 @@ def api_salary_pdf(rid):
   <div class="staff-info">
     <div><strong>{esc_h(row['staff_name'])}</strong></div>
     <div>{esc_h(row['employee_code'] or '')}　{esc_h(row['department'] or '')}　{esc_h(row['role'] or '')}</div>
-    <div>到職日：{esc_h(str(row['hire_date']) if row['hire_date'] else '—')}</div>
-    <div>狀態：<strong>{status_str}</strong></div>
+    <div>到職日:{esc_h(str(row['hire_date']) if row['hire_date'] else '-')}</div>
+    <div>狀態:<strong>{status_str}</strong></div>
   </div>
 </div>
 
@@ -6869,7 +6884,7 @@ def api_salary_pdf(rid):
 
 <div class="footer">
   <span>本薪資單由系統自動產生</span>
-  <span>列印日期：<script>document.write(new Date().toLocaleDateString('zh-TW'))</script></span>
+  <span>列印日期:<script>document.write(new Date().toLocaleDateString('zh-TW'))</script></span>
 </div>
 
 </body>
@@ -6911,7 +6926,7 @@ def api_punch_req_batch():
                     punch_month = str(row['requested_at'])[:7]
                     _trigger_salary_regen_for_leave(conn, row['staff_id'], punch_month)
                 _notify_review_result(row['staff_id'], '補打卡申請', action,
-                                      note and f'批次審核意見：{note}' or '')
+                                      note and f'批次審核意見:{note}' or '')
                 done += 1
     return jsonify({'ok': True, 'done': done})
 
@@ -7019,10 +7034,10 @@ def api_leave_batch():
 @login_required
 def api_attendance_anomalies():
     """
-    偵測出勤異常：
-    - 忘記打下班卡（有上班無下班）
+    偵測出勤異常:
+    - 忘記打下班卡(有上班無下班)
     - 只有下班無上班
-    - 遲到（上班時間晚於班別開始時間）
+    - 遲到(上班時間晚於班別開始時間)
     """
     from datetime import date as _da, datetime as _dta, timezone as _tz, timedelta as _td
     TW    = _tz(_td(hours=8))
@@ -7031,7 +7046,7 @@ def api_attendance_anomalies():
     date_from = today - _td(days=7)
 
     with get_db() as conn:
-        # 取得最近7天打卡記錄（按人、按天）
+        # 取得最近7天打卡記錄(按人、按天)
         rows = conn.execute("""
             SELECT ps.id as staff_id, ps.name, ps.role, ps.department,
                    (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
@@ -7047,7 +7062,7 @@ def api_attendance_anomalies():
             ORDER BY work_date DESC, ps.name
         """, (date_from, today)).fetchall()
 
-        # 取得班別指派（用於遲到／早退判斷）
+        # 取得班別指派(用於遲到/早退判斷)
         shift_rows = conn.execute("""
             SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time, st.name as shift_name
             FROM shift_assignments sa
@@ -7056,7 +7071,7 @@ def api_attendance_anomalies():
         """, (date_from, today)).fetchall()
         shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
 
-        # 今日應出勤但未出勤（排除請假）
+        # 今日應出勤但未出勤(排除請假)
         all_staff = conn.execute(
             "SELECT id, name, role, department FROM punch_staff WHERE active=TRUE"
         ).fetchall()
@@ -7071,7 +7086,7 @@ def api_attendance_anomalies():
 
     anomalies = []
 
-    # 1. 近7天：有上班但無下班卡
+    # 1. 近7天:有上班但無下班卡
     for r in rows:
         types = list(r['types']) if r['types'] else []
         has_in  = 'in'  in types
@@ -7079,7 +7094,7 @@ def api_attendance_anomalies():
         ds = str(r['work_date'])
 
         if has_in and not has_out and ds != str(today):
-            # 昨天或更早沒打下班卡（今天的可能還沒下班）
+            # 昨天或更早沒打下班卡(今天的可能還沒下班)
             anomalies.append({
                 'type':       'missing_out',
                 'label':      '忘記下班打卡',
@@ -7089,7 +7104,7 @@ def api_attendance_anomalies():
                 'role':       r['role'] or '',
                 'department': r['department'] or '',
                 'date':       ds,
-                'detail':     f"上班 {r['first_in']}，無下班記錄",
+                'detail':     f"上班 {r['first_in']},無下班記錄",
             })
 
         if not has_in and has_out:
@@ -7102,10 +7117,10 @@ def api_attendance_anomalies():
                 'role':       r['role'] or '',
                 'department': r['department'] or '',
                 'date':       ds,
-                'detail':     f"下班 {r['last_out']}，無上班記錄",
+                'detail':     f"下班 {r['last_out']},無上班記錄",
             })
 
-        # 遲到判斷（有班別指派）
+        # 遲到判斷(有班別指派)
         if has_in and r['first_in']:
             shift = shift_map.get((r['staff_id'], ds))
             if shift and shift['start_time']:
@@ -7123,12 +7138,12 @@ def api_attendance_anomalies():
                             'role':       r['role'] or '',
                             'department': r['department'] or '',
                             'date':       ds,
-                            'detail':     f"應 {shift['start_time'][:5]} 上班，實際 {r['first_in']}（晚 {late_mins} 分鐘）",
+                            'detail':     f"應 {shift['start_time'][:5]} 上班,實際 {r['first_in']}(晚 {late_mins} 分鐘)",
                         })
                 except Exception:
                     pass
 
-        # 早退判斷（有班別指派）
+        # 早退判斷(有班別指派)
         if has_out and r['last_out'] and ds != str(today):
             shift = shift_map.get((r['staff_id'], ds))
             if shift and shift['end_time']:
@@ -7146,12 +7161,12 @@ def api_attendance_anomalies():
                             'role':       r['role'] or '',
                             'department': r['department'] or '',
                             'date':       ds,
-                            'detail':     f"應 {shift['end_time'][:5]} 下班，實際 {r['last_out']}（早 {early_mins} 分鐘）",
+                            'detail':     f"應 {shift['end_time'][:5]} 下班,實際 {r['last_out']}(早 {early_mins} 分鐘)",
                         })
                 except Exception:
                     pass
 
-    # 2. 今日未出勤（不含請假）
+    # 2. 今日未出勤(不含請假)
     for s in all_staff:
         if s['id'] not in today_punched_ids and s['id'] not in on_leave_today_ids:
             anomalies.append({
@@ -7179,7 +7194,7 @@ def api_attendance_anomalies():
 @app.route('/api/punch/staff/<int:sid>/terminate', methods=['POST'])
 @login_required
 def api_staff_terminate(sid):
-    """辦理離職：設定離職日、停用帳號、記錄備註"""
+    """辦理離職:設定離職日、停用帳號、記錄備註"""
     b = request.get_json(force=True)
     termination_date = b.get('termination_date', '')
     reason           = b.get('reason', '').strip()
@@ -7235,7 +7250,7 @@ def api_staff_terminate(sid):
 @app.route('/api/punch/staff/<int:sid>/reinstate', methods=['POST'])
 @login_required
 def api_staff_reinstate(sid):
-    """復職（重新啟用帳號）"""
+    """復職(重新啟用帳號)"""
     with get_db() as conn:
         row = conn.execute("""
             UPDATE punch_staff SET active=TRUE,
@@ -7573,6 +7588,7 @@ def api_finance_record_create():
     b = request.get_json(force=True)
     if not b.get('title','').strip(): return jsonify({'error': '標題為必填'}), 400
     if not b.get('record_date'):      return jsonify({'error': '日期為必填'}), 400
+    if float(b.get('amount', 0) or 0) <= 0: return jsonify({'error': '金額必須大於0'}), 400
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO finance_records
@@ -7615,7 +7631,6 @@ def api_finance_record_delete(rid):
 def api_finance_summary(year, month):
     period = f"{year}-{month.zfill(2)}"
     with get_db() as conn:
-        totals = conn.execute("""
         _fin_d_s, _fin_d_e = _month_date_range(period)
         totals = conn.execute("""
             SELECT type, COALESCE(SUM(amount),0) as total
@@ -7694,13 +7709,13 @@ def api_finance_ocr():
                 'content': [
                     {'type': 'image', 'source': {'type': 'base64', 'media_type': media_type, 'data': img_b64}},
                     {'type': 'text', 'text': (
-                        '請辨識此文件，以JSON格式回傳以下欄位（找不到的欄位填null）：\n'
+                        '請辨識此文件,以JSON格式回傳以下欄位(找不到的欄位填null):\n'
                         '{"date":"YYYY-MM-DD","vendor":"廠商名稱","invoice_no":"發票或單據號碼",'
                         '"total_amount":含稅總金額數字,"tax_amount":稅額數字,"pre_tax_amount":未稅金額數字,'
                         '"doc_type":"invoice或receipt或expense之一",'
-                        '"title":"建議記帳標題（簡短）",'
+                        '"title":"建議記帳標題(簡短)",'
                         '"items":[{"name":"品項","qty":數量,"unit_price":單價,"amount":小計}],'
-                        '"currency":"TWD"}\n只回傳JSON，不要其他文字或markdown。'
+                        '"currency":"TWD"}\n只回傳JSON,不要其他文字或markdown.'
                     )}
                 ]
             }]
@@ -7712,7 +7727,7 @@ def api_finance_ocr():
     except _json.JSONDecodeError:
         result = {'raw_text': text, 'error': 'OCR 回傳格式無法解析'}
     except Exception as e:
-        return jsonify({'error': f'OCR 失敗：{str(e)}'}), 500
+        return jsonify({'error': f'OCR 失敗:{str(e)}'}), 500
 
     try:
         with get_db() as conn:
@@ -7799,7 +7814,7 @@ def init_finance_settings_db():
                     "UPDATE finance_categories SET statement_section=%s WHERE name=%s AND statement_section IS NULL",
                     (sec, name)
                 )
-            # Remaining NULLs: income → operating_revenue, expense → operating_expense
+            # Remaining NULLs: income -> operating_revenue, expense -> operating_expense
             conn.execute("""
                 UPDATE finance_categories
                 SET statement_section = CASE WHEN type='income' THEN 'operating_revenue' ELSE 'operating_expense' END
@@ -8012,7 +8027,7 @@ def api_training_summary():
 @app.route('/api/salary/records/preview', methods=['POST'])
 @require_module('salary')
 def api_salary_preview():
-    """預覽薪資計算結果（不儲存）"""
+    """預覽薪資計算結果(不儲存)"""
     b     = request.get_json(force=True) or {}
     month = b.get('month', '').strip()
     if not month:
@@ -8253,7 +8268,7 @@ def api_finance_export_statements(year, month):
         ws.append([])  # blank
 
         # column headers
-        ws.append(['項　　目', '', '金　額（元）'])
+        ws.append(['項　　目', '', '金　額(元)'])
         r = ws.max_row
         ws.cell(r, 1).font      = Font(FONT, bold=True, size=11, color='FFFFFF')
         ws.cell(r, 3).font      = Font(FONT, bold=True, size=11, color='FFFFFF')
@@ -8305,7 +8320,7 @@ def api_finance_export_statements(year, month):
     row(ws1, '營業費用合計', IS['operating_expense'], indent=1, subtotal=True)
     ws1.append([])
 
-    row(ws1, '營業利益（損失）', IS['operating_income'], indent=1, total=True)
+    row(ws1, '營業利益(損失)', IS['operating_income'], indent=1, total=True)
     ws1.append([])
 
     if IS['other_revenue'] or IS['other_revenue_lines']:
@@ -8322,7 +8337,7 @@ def api_finance_export_statements(year, month):
         row(ws1, '營業外費用合計', IS['other_expense'], indent=1, subtotal=True)
         ws1.append([])
 
-    row(ws1, '本期淨利（損）', IS['net_income'], bold=True, total=True, dbl=True)
+    row(ws1, '本期淨利(損)', IS['net_income'], bold=True, total=True, dbl=True)
 
     # ─── 資產負債表 ───────────────────────────────────────────────
     ws2 = wb.create_sheet('資產負債表')
@@ -8350,15 +8365,15 @@ def api_finance_export_statements(year, month):
 
     # ─── 現金流量表 ───────────────────────────────────────────────
     ws3 = wb.create_sheet('現金流量表')
-    setup_ws(ws3, '現金流量表（直接法）', f'中華民國{ry}年{m}月份')
+    setup_ws(ws3, '現金流量表(直接法)', f'中華民國{ry}年{m}月份')
 
     row(ws3, '一、營業活動之現金流量', bold=True)
-    row(ws3, '（一）收現收入', indent=1, bold=True)
+    row(ws3, '(一)收現收入', indent=1, bold=True)
     for l in CF['operating_inflow_lines']:
         row(ws3, l['name'], l['amount'], indent=3)
     row(ws3, '收現合計', CF['operating_inflow'], indent=2, subtotal=True)
     ws3.append([])
-    row(ws3, '（二）付現費用', indent=1, bold=True)
+    row(ws3, '(二)付現費用', indent=1, bold=True)
     for l in CF['operating_outflow_lines']:
         row(ws3, l['name'], -l['amount'], indent=3)
     row(ws3, '付現合計', -CF['operating_outflow'], indent=2, subtotal=True)
@@ -8467,7 +8482,7 @@ def api_recurring_delete(rid):
 @app.route('/api/finance/recurring/generate', methods=['POST'])
 @require_module('finance')
 def api_recurring_generate():
-    """為指定月份產生定期分錄（冪等：已產生則跳過）"""
+    """為指定月份產生定期分錄(冪等:已產生則跳過)"""
     from datetime import date as _d, timedelta as _td
     import calendar as _cal
     b = request.get_json(force=True)
@@ -8662,7 +8677,7 @@ def api_bank_match():
 @app.route('/api/finance/bank/auto-match', methods=['POST'])
 @require_module('finance')
 def api_bank_auto_match():
-    """自動比對：相同金額且日期在 3 天內"""
+    """自動比對:相同金額且日期在 3 天內"""
     b = request.get_json(force=True)
     month = b.get('month', '')
     matched = 0
@@ -8716,7 +8731,7 @@ def api_bank_summary():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Feature 3: 稅務申報準備 (Tax Filing Prep — Taiwan VAT 401)
+# Feature 3: 稅務申報準備 (Tax Filing Prep - Taiwan VAT 401)
 # ═══════════════════════════════════════════════════════════════════
 
 @app.route('/api/finance/tax/<int:year>/<int:period>', methods=['GET'])
@@ -9000,7 +9015,7 @@ def api_budgets_vs_actual():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Feature 6: 薪資費用連動 (Payroll → Finance)
+# Feature 6: 薪資費用連動 (Payroll -> Finance)
 # ═══════════════════════════════════════════════════════════════════
 
 @app.route('/api/finance/payroll/status', methods=['GET'])
@@ -9072,12 +9087,12 @@ def api_payroll_sync():
     return jsonify({'created': created, 'month': month})
 
 
-# ── Tax → Finance sync ──────────────────────────────────────────
+# ── Tax -> Finance sync ──────────────────────────────────────────
 
 @app.route('/api/finance/tax/<int:year>/<int:period>/sync', methods=['POST'])
 @require_module('finance')
 def api_finance_tax_sync(year, period):
-    """將應繳/退稅金額建立為財務分錄，流入損益表"""
+    """將應繳/退稅金額建立為財務分錄,流入損益表"""
     if period < 1 or period > 6:
         return jsonify({'error': '期別需為 1-6'}), 400
     m_start = (period - 1) * 2 + 1
@@ -9099,24 +9114,24 @@ def api_finance_tax_sync(year, period):
     tax_payable  = round(sales_tax - purchase_tax, 2)
 
     if tax_payable == 0:
-        return jsonify({'created': 0, 'message': '稅額為零，無需建立分錄'})
+        return jsonify({'created': 0, 'message': '稅額為零,無需建立分錄'})
 
     # Record date = last day of period's last month
     import calendar as _cal
     record_date = f"{year}-{str(m_end).zfill(2)}-{_cal.monthrange(year, m_end)[1]}"
     note = f"銷項稅 ${round(sales_tax,0):,.0f} − 進項稅 ${round(purchase_tax,0):,.0f} = {'應繳' if tax_payable>0 else '退稅'} ${abs(round(tax_payable,0)):,.0f}"
-    period_label = f"民國{roc_year}年第{period}期（{months[0]}～{months[-1]}）"
+    period_label = f"民國{roc_year}年第{period}期({months[0]}~{months[-1]})"
 
     created = 0
     with get_db() as conn:
-        # 冪等性：同一期別已有 tax-sync 記錄就不重複建立
+        # 冪等性:同一期別已有 tax-sync 記錄就不重複建立
         existing = conn.execute("""
             SELECT id FROM finance_records
             WHERE created_by='tax-sync' AND record_date=%s
               AND title LIKE %s LIMIT 1
         """, (record_date, f'%{period_label}%')).fetchone()
         if existing:
-            return jsonify({'created': 0, 'message': f'該期別（{period_label}）已建立過分錄，略過。',
+            return jsonify({'created': 0, 'message': f'該期別({period_label})已建立過分錄,略過.',
                             'tax_payable': tax_payable})
 
         if tax_payable > 0:
@@ -9173,7 +9188,7 @@ def _broadcast_announcement_line(title, content):
             return
         api = LineBotApi(cfg['channel_access_token'])
         snippet = content[:60] + ('…' if len(content) > 60 else '')
-        msg = f"[公告] {title}\n{snippet}\n\n請至員工系統查看完整公告。"
+        msg = f"[公告] {title}\n{snippet}\n\n請至員工系統查看完整公告."
         for s in staff_rows:
             try:
                 api.push_message(s['line_user_id'], TextSendMessage(text=msg))
@@ -9259,7 +9274,7 @@ def api_expense_submit():
 
 @app.route('/api/expense/ocr', methods=['POST'])
 def api_expense_ocr():
-    """員工自助 OCR — 複用 finance OCR 邏輯"""
+    """員工自助 OCR - 複用 finance OCR 邏輯"""
     sid = session.get('punch_staff_id')
     if not sid: return jsonify({'error': '請先登入'}), 401
     import anthropic as _ant, base64, re as _re2
@@ -9278,7 +9293,7 @@ def api_expense_ocr():
             model='claude-sonnet-4-6', max_tokens=512,
             messages=[{'role':'user','content':[
                 {'type':'image','source':{'type':'base64','media_type':media_type,'data':img_b64}},
-                {'type':'text','text':'請辨識此收據或發票，以JSON格式回傳：{"date":"YYYY-MM-DD","vendor":"廠商","title":"建議標題","total_amount":數字,"doc_type":"receipt或invoice"}\n只回傳JSON。'}
+                {'type':'text','text':'請辨識此收據或發票,以JSON格式回傳:{"date":"YYYY-MM-DD","vendor":"廠商","title":"建議標題","total_amount":數字,"doc_type":"receipt或invoice"}\n只回傳JSON.'}
             ]}]
         )
         text = msg.content[0].text.strip()
@@ -9286,7 +9301,7 @@ def api_expense_ocr():
         text = _re2.sub(r'\s*```$','',text,flags=_re2.MULTILINE)
         result = _json.loads(text)
     except Exception as e:
-        return jsonify({'error': f'OCR 失敗：{e}'}), 500
+        return jsonify({'error': f'OCR 失敗:{e}'}), 500
     try:
         with get_db() as conn:
             doc = conn.execute("""
@@ -9395,7 +9410,7 @@ def api_expense_review(cid):
                 VALUES (%s,%s,'expense',%s,%s,%s,%s,'expense-claim') RETURNING id
             """, (claim['expense_date'], cat['id'] if cat else None,
                   claim['title'], claim['amount'],
-                  f"報帳申請 #{cid}：{claim['note'] or ''}",
+                  f"報帳申請 #{cid}:{claim['note'] or ''}",
                   claim['document_id'])).fetchone()
             finance_rid = frec['id']
         elif action == 'reject' and claim.get('finance_record_id'):
@@ -9415,8 +9430,8 @@ def api_expense_review(cid):
         """, (new_status, reviewed_by, review_note, finance_rid, cid)).fetchone()
 
     if row:
-        extra = f"標題：{claim['title']}　金額：${float(claim['amount']):,.0f}"
-        if review_note: extra += f"\n意見：{review_note}"
+        extra = f"標題:{claim['title']}　金額:${float(claim['amount']):,.0f}"
+        if review_note: extra += f"\n意見:{review_note}"
         _notify_review_result(claim['staff_id'], '費用報帳', action, extra)
 
     return jsonify(_expense_row(row)) if row else ('', 404)
@@ -9476,7 +9491,7 @@ _DEFAULT_GRADE_CONFIG = [
 ]
 
 def _get_grade_config():
-    """從 DB 讀取評級設定，若未設定則回傳預設值（按門檻由高到低排序）。"""
+    """從 DB 讀取評級設定,若未設定則回傳預設值(按門檻由高到低排序)."""
     try:
         with get_db() as conn:
             row = conn.execute(
@@ -9656,11 +9671,11 @@ def api_perf_review_create():
     # LINE 通知
     grade_labels = _grade_labels()
     msg = (f"[績效考核] {period_label} 考核結果\n"
-           f"總分：{total:.1f} / {max_s:.0f}（{pct:.0f}%）\n"
-           f"評級：{grade} {grade_labels.get(grade,'')}\n"
-           f"考核人：{reviewer}\n"
-           + (f"備注：{comments[:60]}\n" if comments else '')
-           + "請至員工系統查看詳情。")
+           f"總分:{total:.1f} / {max_s:.0f}({pct:.0f}%)\n"
+           f"評級:{grade} {grade_labels.get(grade,'')}\n"
+           f"考核人:{reviewer}\n"
+           + (f"備注:{comments[:60]}\n" if comments else '')
+           + "請至員工系統查看詳情.")
     _notify_staff_line(staff_id, msg)
 
     d = _perf_review_row(row)
@@ -9695,7 +9710,7 @@ def api_perf_review_update(rid):
 @app.route('/api/performance/reviews/<int:rid>/adjust-salary', methods=['POST'])
 @login_required
 def api_perf_adjust_salary(rid):
-    """依考核結果調薪 — 直接更新員工底薪並記錄"""
+    """依考核結果調薪 - 直接更新員工底薪並記錄"""
     b     = request.get_json(force=True)
     delta = float(b.get('salary_delta', b.get('delta', 0)))
     note  = (b.get('note') or '').strip()
@@ -9722,10 +9737,10 @@ def api_perf_adjust_salary(rid):
 
     direction = '調升' if delta > 0 else '調降'
     msg = (f"[薪資調整] 績效考核連動\n"
-           f"考核期：{rev['period_label']}　評級：{rev['grade']}\n"
+           f"考核期:{rev['period_label']}　評級:{rev['grade']}\n"
            f"{direction} NT$ {abs(delta):,.0f}\n"
-           f"新底薪：NT$ {new_salary:,.0f}\n"
-           + (f"說明：{note}" if note else ''))
+           f"新底薪:NT$ {new_salary:,.0f}\n"
+           + (f"說明:{note}" if note else ''))
     _notify_staff_line(staff['id'], msg)
 
     return jsonify({'ok': True, 'new_salary': new_salary, 'delta': delta})
@@ -9772,9 +9787,9 @@ def api_perf_config_update():
         pct = g.get('min_pct')
         if pct is None or not (0 <= float(pct) <= 100):
             return jsonify({'error': '門檻百分比需介於 0~100'}), 400
-    # 確保至少有一個門檻為 0，避免無法分級
+    # 確保至少有一個門檻為 0,避免無法分級
     if not any(float(g.get('min_pct', -1)) == 0 for g in grades):
-        return jsonify({'error': '必須有一個評級的門檻設為 0%（作為最低等級）'}), 400
+        return jsonify({'error': '必須有一個評級的門檻設為 0%(作為最低等級)'}), 400
     grades_sorted = sorted(
         [{'grade': str(g['grade']).strip(), 'label': str(g['label']).strip(),
           'min_pct': float(g['min_pct'])} for g in grades],
@@ -9794,7 +9809,7 @@ def api_perf_config_update():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _line_query_leave_balance(staff, user_id):
-    """查詢員工本年度假期餘額（含待審核天數）"""
+    """查詢員工本年度假期餘額(含待審核天數)"""
     from datetime import date as _dlb
     year = _dlb.today().year
     try:
@@ -9817,10 +9832,10 @@ def _line_query_leave_balance(staff, user_id):
                 """, (staff['id'], year)).fetchall()
             }
     except Exception as e:
-        _send_line_punch(user_id, f'查詢失敗：{e}')
+        _send_line_punch(user_id, f'查詢失敗:{e}')
         return
     if not rows:
-        _send_line_punch(user_id, f'📋 {staff["name"]} {year} 年\n尚無假期餘額記錄，請聯絡管理員。')
+        _send_line_punch(user_id, f'📋 {staff["name"]} {year} 年\n尚無假期餘額記錄,請聯絡管理員.')
         return
     lines = [f'📋 {staff["name"]} {year} 年假期餘額']
     for r in rows:
@@ -9845,34 +9860,34 @@ def _line_query_salary(staff, user_id):
                 ORDER BY month DESC LIMIT 1
             """, (staff['id'],)).fetchone()
     except Exception as e:
-        _send_line_punch(user_id, f'查詢失敗：{e}')
+        _send_line_punch(user_id, f'查詢失敗:{e}')
         return
     if not row:
-        _send_line_punch(user_id, f'📊 {staff["name"]}\n尚無薪資記錄。')
+        _send_line_punch(user_id, f'📊 {staff["name"]}\n尚無薪資記錄.')
         return
     status_map = {'draft':'草稿', 'confirmed':'已確認', 'paid':'已發放'}
     _send_line_punch(user_id,
         f'📊 {staff["name"]} {row["month"]} 薪資\n\n'
-        f'底薪：NT$ {float(row["base_salary"] or 0):,.0f}\n'
-        f'津貼：NT$ {float(row["allowance_total"] or 0):,.0f}\n'
-        f'扣除：NT$ {float(row["deduction_total"] or 0):,.0f}\n'
+        f'底薪:NT$ {float(row["base_salary"] or 0):,.0f}\n'
+        f'津貼:NT$ {float(row["allowance_total"] or 0):,.0f}\n'
+        f'扣除:NT$ {float(row["deduction_total"] or 0):,.0f}\n'
         f'━━━━━━━━━━━━\n'
-        f'實領：NT$ {float(row["net_pay"] or 0):,.0f}\n'
-        f'狀態：{status_map.get(row["status"], row["status"])}\n\n'
-        f'詳細資訊請至員工系統薪資單查看。')
+        f'實領:NT$ {float(row["net_pay"] or 0):,.0f}\n'
+        f'狀態:{status_map.get(row["status"], row["status"])}\n\n'
+        f'詳細資訊請至員工系統薪資單查看.')
 
 
 def _line_submit_leave(staff, user_id, text):
     """
-    解析並建立請假申請。
-    格式：
-      請假                                → Quick Reply 選假別
-      請假 假別                            → Quick Reply 選日期
-      請假 假別 DATE                       → Quick Reply 選時段
-      請假 假別 DATE 全天/上午/下午          → 送出
-      請假 假別 DATE HH:MM                 → Quick Reply 選結束時間
-      請假 假別 DATE HH:MM HH:MM           → 送出（指定時間）
-      請假 假別 DATE1 DATE2               → 送出（多天）
+    解析並建立請假申請.
+    格式:
+      請假                                -> Quick Reply 選假別
+      請假 假別                            -> Quick Reply 選日期
+      請假 假別 DATE                       -> Quick Reply 選時段
+      請假 假別 DATE 全天/上午/下午          -> 送出
+      請假 假別 DATE HH:MM                 -> Quick Reply 選結束時間
+      請假 假別 DATE HH:MM HH:MM           -> 送出(指定時間)
+      請假 假別 DATE1 DATE2               -> 送出(多天)
     """
     import re as _re_lv
     from datetime import date as _dlv, timedelta as _tdlv
@@ -9882,7 +9897,7 @@ def _line_submit_leave(staff, user_id, text):
     parts = text.strip().split()
     # parts[0] = '請假'
 
-    # Step 1: only "請假" → Quick Reply with leave types + remaining balance
+    # Step 1: only "請假" -> Quick Reply with leave types + remaining balance
     if len(parts) == 1:
         year = _dlv.today().year
         with get_db() as conn:
@@ -9897,20 +9912,20 @@ def _line_submit_leave(staff, user_id, text):
                 """, (staff['id'], year)).fetchall()
             }
         if not types:
-            _send_line_punch(user_id, '目前無可用假別，請聯絡管理員。')
+            _send_line_punch(user_id, '目前無可用假別,請聯絡管理員.')
             return
-        lines = ['🌿 請假申請\n\n可用假別（剩餘天數）：']
+        lines = ['🌿 請假申請\n\n可用假別(剩餘天數):']
         items = []
         for r in types:
             rem = balances.get(r['id'])
             rem_str = f' {rem:.1f}天' if rem is not None else ''
             lines.append(f'• {r["name"]}{rem_str}')
             items.append({'label': f'{r["name"]}{rem_str}', 'text': f'請假 {r["name"]}'})
-        lines.append('\n請點下方按鈕選擇假別：')
+        lines.append('\n請點下方按鈕選擇假別:')
         _send_line_with_quick_reply(user_id, '\n'.join(lines), items[:13])
         return
 
-    # Step 2: "請假 假別" (no date) → Quick Reply with date options
+    # Step 2: "請假 假別" (no date) -> Quick Reply with date options
     if len(parts) == 2:
         leave_type_name = parts[1]
         today = _dlv.today()
@@ -9928,12 +9943,12 @@ def _line_submit_leave(staff, user_id, text):
             if len(date_items) == 6:
                 break
         _send_line_with_quick_reply(user_id,
-            f'🌿 請假 · {leave_type_name}\n\n請選擇日期，或手動輸入多天：\n'
+            f'🌿 請假 · {leave_type_name}\n\n請選擇日期,或手動輸入多天:\n'
             f'請假 {leave_type_name} 開始日 結束日',
             date_items)
         return
 
-    # Step 2.5: "請假 假別 DATE" → Quick Reply: 全天/上午半天/下午半天/指定時間
+    # Step 2.5: "請假 假別 DATE" -> Quick Reply: 全天/上午半天/下午半天/指定時間
     if len(parts) == 3 and DATE_PAT.match(parts[2]):
         leave_type_name = parts[1]
         date_str = parts[2]
@@ -9944,21 +9959,21 @@ def _line_submit_leave(staff, user_id, text):
             {'label': '指定時間', 'text': f'請假 {leave_type_name} {date_str} 指定時間'},
         ]
         _send_line_with_quick_reply(user_id,
-            f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇時段：',
+            f'🌿 請假 · {leave_type_name}\n日期:{date_str}\n\n請選擇時段:',
             items_period)
         return
 
-    # Step 2.6: "請假 假別 DATE 指定時間" → Quick Reply: 選開始時間
+    # Step 2.6: "請假 假別 DATE 指定時間" -> Quick Reply: 選開始時間
     if len(parts) == 4 and DATE_PAT.match(parts[2]) and parts[3] == '指定時間':
         leave_type_name = parts[1]
         date_str = parts[2]
         start_opts = ['07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00']
         items = [{'label': t, 'text': f'請假 {leave_type_name} {date_str} {t}'} for t in start_opts]
         _send_line_with_quick_reply(user_id,
-            f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇開始時間：', items)
+            f'🌿 請假 · {leave_type_name}\n日期:{date_str}\n\n請選擇開始時間:', items)
         return
 
-    # Step 2.7: "請假 假別 DATE HH:MM" → Quick Reply: 選結束時間
+    # Step 2.7: "請假 假別 DATE HH:MM" -> Quick Reply: 選結束時間
     if len(parts) == 4 and DATE_PAT.match(parts[2]) and TIME_PAT.match(parts[3]):
         leave_type_name = parts[1]
         date_str = parts[2]
@@ -9971,10 +9986,10 @@ def _line_submit_leave(staff, user_id, text):
                 break
             eh, em = total_m // 60, total_m % 60
             end_opts.append((f'{eh:02d}:{em:02d}', delta_h))
-        items = [{'label': f'至 {t}（{d:.1g}h）', 'text': f'請假 {leave_type_name} {date_str} {start_str} {t}'}
+        items = [{'label': f'至 {t}({d:.1g}h)', 'text': f'請假 {leave_type_name} {date_str} {start_str} {t}'}
                  for t, d in end_opts[:13]]
         _send_line_with_quick_reply(user_id,
-            f'🌿 請假 · {leave_type_name}\n日期：{date_str}　開始：{start_str}\n\n請選擇結束時間：', items)
+            f'🌿 請假 · {leave_type_name}\n日期:{date_str}　開始:{start_str}\n\n請選擇結束時間:', items)
         return
 
     leave_type_name = parts[1]
@@ -9989,17 +10004,17 @@ def _line_submit_leave(staff, user_id, text):
             eh, em = map(int, end_str.split(':'))
             hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60
             if hours <= 0:
-                _send_line_punch(user_id, '結束時間必須晚於開始時間，請重新選擇。')
+                _send_line_punch(user_id, '結束時間必須晚於開始時間,請重新選擇.')
                 return
         except ValueError:
-            _send_line_punch(user_id, '時間格式錯誤，請使用 HH:MM。')
+            _send_line_punch(user_id, '時間格式錯誤,請使用 HH:MM.')
             return
-        # 每8小時 = 1天，四捨五入至0.5天
+        # 每8小時 = 1天,四捨五入至0.5天
         days = max(0.5, round(hours / 8 * 2) / 2)
         start_time_val = start_str; end_time_val = end_str
         date_str2 = date_str1
         start_half = False; end_half = False
-        reason = '（LINE 請假）'
+        reason = '(LINE 請假)'
 
         with get_db() as conn:
             lt = conn.execute(
@@ -10014,7 +10029,7 @@ def _line_submit_leave(staff, user_id, text):
                 avail = conn.execute(
                     "SELECT name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
                 ).fetchall()
-                _send_line_punch(user_id, f'找不到假別「{leave_type_name}」\n可用：{"、".join(r["name"] for r in avail)}')
+                _send_line_punch(user_id, f'找不到假別「{leave_type_name}」\n可用:{"、".join(r["name"] for r in avail)}')
                 return
             year = date_str1[:4]
             bal = conn.execute("""
@@ -10026,7 +10041,7 @@ def _line_submit_leave(staff, user_id, text):
                 remain = float(bal['total_days'] or 0) - float(bal['used_days'] or 0)
                 if remain < days:
                     _send_line_punch(user_id,
-                        f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天，申請 {days} 天')
+                        f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天,申請 {days} 天')
                     return
             row = conn.execute("""
                 INSERT INTO leave_requests
@@ -10035,14 +10050,14 @@ def _line_submit_leave(staff, user_id, text):
                 VALUES (%s,%s,%s,%s,%s,FALSE,FALSE,%s,'pending',%s,%s,NOW()) RETURNING id
             """, (staff['id'], lt['id'], date_str1, date_str1, days,
                   reason, start_time_val, end_time_val)).fetchone()
-        bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
+        bal_str = f'(剩餘 {remain:.1f} 天)' if remain is not None else ''
         _send_line_punch(user_id,
             f'✅ 請假申請已送出\n\n'
-            f'假別：{lt["name"]} {bal_str}\n'
-            f'日期：{date_str1}\n'
-            f'時段：{start_str} ～ {end_str}（{hours:.1f} 小時）\n'
-            f'天數：{days} 天\n\n'
-            f'申請號：#{row["id"]}，等待管理員審核。')
+            f'假別:{lt["name"]} {bal_str}\n'
+            f'日期:{date_str1}\n'
+            f'時段:{start_str} ~ {end_str}({hours:.1f} 小時)\n'
+            f'天數:{days} 天\n\n'
+            f'申請號:#{row["id"]},等待管理員審核.')
         return
 
     # --- Day-based leave (全天 / 上午 / 下午 / multi-day) ---
@@ -10066,14 +10081,14 @@ def _line_submit_leave(staff, user_id, text):
     elif period_token == '下午':
         start_half = False; end_half = True
 
-    reason = '（LINE 請假）'
+    reason = '(LINE 請假)'
 
     # Validate dates
     try:
         _dlv.fromisoformat(date_str1)
         _dlv.fromisoformat(date_str2)
     except ValueError:
-        _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dlv.today().isoformat()}')
+        _send_line_punch(user_id, f'日期格式錯誤,請使用 YYYY-MM-DD,例:{_dlv.today().isoformat()}')
         return
 
     # Find leave type (fuzzy: exact or contains)
@@ -10091,7 +10106,7 @@ def _line_submit_leave(staff, user_id, text):
                 "SELECT name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
             ).fetchall()
             names = '、'.join(r['name'] for r in avail)
-            _send_line_punch(user_id, f'找不到假別「{leave_type_name}」\n\n可用假別：{names}')
+            _send_line_punch(user_id, f'找不到假別「{leave_type_name}」\n\n可用假別:{names}')
             return
 
         # Check leave balance
@@ -10101,7 +10116,7 @@ def _line_submit_leave(staff, user_id, text):
             WHERE staff_id=%s AND leave_type_id=%s AND year=%s
         """, (staff['id'], lt['id'], int(year))).fetchone()
 
-        # Calculate requested days (排班日為準；無排班則排除週六日); half day = 0.5
+        # Calculate requested days (排班日為準;無排班則排除週六日); half day = 0.5
         sched_lv = _get_staff_scheduled_dates(conn, staff['id'], date_str1, date_str2)
         days = _calc_leave_days(date_str1, date_str2, start_half, end_half,
                                 scheduled_dates=sched_lv)
@@ -10111,8 +10126,8 @@ def _line_submit_leave(staff, user_id, text):
             remain = float(bal['total_days'] or 0) - float(bal['used_days'] or 0)
             if remain < days:
                 _send_line_punch(user_id,
-                    f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天，申請 {days} 天\n\n'
-                    f'請至員工系統調整後再申請。')
+                    f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天,申請 {days} 天\n\n'
+                    f'請至員工系統調整後再申請.')
                 return
 
         # Create leave request
@@ -10124,16 +10139,16 @@ def _line_submit_leave(staff, user_id, text):
         """, (staff['id'], lt['id'], date_str1, date_str2, days,
               start_half, end_half, reason)).fetchone()
 
-    period_label = '（上午半天）' if (start_half and end_half and date_str1 == date_str2) else \
-                   '（下午半天）' if (end_half and not start_half and date_str1 == date_str2) else ''
-    bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
+    period_label = '(上午半天)' if (start_half and end_half and date_str1 == date_str2) else \
+                   '(下午半天)' if (end_half and not start_half and date_str1 == date_str2) else ''
+    bal_str = f'(剩餘 {remain:.1f} 天)' if remain is not None else ''
     _send_line_punch(user_id,
         f'✅ 請假申請已送出\n\n'
-        f'假別：{lt["name"]} {bal_str}\n'
-        f'日期：{date_str1}' + (f' ～ {date_str2}' if date_str2 != date_str1 else '') +
+        f'假別:{lt["name"]} {bal_str}\n'
+        f'日期:{date_str1}' + (f' ~ {date_str2}' if date_str2 != date_str1 else '') +
         f'{period_label}\n'
-        f'天數：{days} 天\n\n'
-        f'申請號：#{row["id"]}，等待管理員審核。')
+        f'天數:{days} 天\n\n'
+        f'申請號:#{row["id"]},等待管理員審核.')
 
 
 def _line_query_performance(staff, user_id):
@@ -10150,29 +10165,29 @@ def _line_query_performance(staff, user_id):
                 ORDER BY pr.reviewed_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
     except Exception as e:
-        _send_line_punch(user_id, f'查詢失敗：{e}')
+        _send_line_punch(user_id, f'查詢失敗:{e}')
         return
     if not row:
-        _send_line_punch(user_id, f'{staff["name"]}\n尚無績效考核記錄。')
+        _send_line_punch(user_id, f'{staff["name"]}\n尚無績效考核記錄.')
         return
     grade_label = _grade_labels()
     pct = float(row['total_score']) / float(row['max_score']) * 100 if row['max_score'] else 0
-    adj = f"\n薪資調整：NT$ {float(row['salary_delta']):+,.0f}" if row['salary_adjusted'] else ''
+    adj = f"\n薪資調整:NT$ {float(row['salary_delta']):+,.0f}" if row['salary_adjusted'] else ''
     reviewed = str(row['reviewed_at'])[:10] if row['reviewed_at'] else ''
     _send_line_punch(user_id,
         f'{staff["name"]} 最近考核\n\n'
-        f'期間：{row["period_label"]}\n'
-        f'範本：{row["tpl_name"] or "—"}\n'
-        f'得分：{float(row["total_score"]):.1f} / {float(row["max_score"]):.0f}（{pct:.0f}%）\n'
-        f'評級：{row["grade"]} {grade_label.get(row["grade"],"")}'
+        f'期間:{row["period_label"]}\n'
+        f'範本:{row["tpl_name"] or "-"}\n'
+        f'得分:{float(row["total_score"]):.1f} / {float(row["max_score"]):.0f}({pct:.0f}%)\n'
+        f'評級:{row["grade"]} {grade_label.get(row["grade"],"")}'
         f'{adj}\n'
-        + (f'備注：{row["comments"][:60]}\n' if row['comments'] else '')
-        + f'考核日：{reviewed}')
+        + (f'備注:{row["comments"][:60]}\n' if row['comments'] else '')
+        + f'考核日:{reviewed}')
 
 
 def _line_query_monthly_records(staff, user_id, text):
-    """查詢員工月出勤記錄與打卡明細。
-    格式：出勤紀錄 [YYYY-MM]（省略月份則查本月）
+    """查詢員工月出勤記錄與打卡明細.
+    格式:出勤紀錄 [YYYY-MM](省略月份則查本月)
     """
     import re as _rem
     from datetime import date as _dm, timezone as _tzm, timedelta as _tdm, datetime as _dtm
@@ -10199,11 +10214,11 @@ def _line_query_monthly_records(staff, user_id, text):
                 ORDER BY punched_at ASC
             """, (staff['id'], _lb_ts_s, _lb_ts_e)).fetchall()
     except Exception as e:
-        _send_line_punch(user_id, f'查詢失敗：{e}')
+        _send_line_punch(user_id, f'查詢失敗:{e}')
         return
 
     if not rows:
-        _send_line_punch(user_id, f'📋 {staff["name"]} {month}\n該月尚無打卡記錄。')
+        _send_line_punch(user_id, f'📋 {staff["name"]} {month}\n該月尚無打卡記錄.')
         return
 
     WDAY = ['一', '二', '三', '四', '五', '六', '日']
@@ -10255,12 +10270,12 @@ def _line_query_monthly_records(staff, user_id, text):
 
     th, tm = divmod(total_mins, 60)
     total_str = f'{th}h{tm:02d}' if tm else f'{th}h'
-    anomaly_str = f'｜異常 {anomaly_days} 天' if anomaly_days else ''
+    anomaly_str = f'|異常 {anomaly_days} 天' if anomaly_days else ''
     header = (f'📋 {staff["name"]} {month} 出勤\n'
-              f'出勤 {len(days)} 天｜工時 {total_str}{anomaly_str}\n'
+              f'出勤 {len(days)} 天|工時 {total_str}{anomaly_str}\n'
               + '─' * 20)
 
-    # 訊息過長時分批送出（LINE 單則上限約 5000 字）
+    # 訊息過長時分批送出(LINE 單則上限約 5000 字)
     full = header + '\n' + '\n'.join(lines)
     if len(full) <= 4500:
         _send_line_punch(user_id, full)
@@ -10278,7 +10293,7 @@ def _line_query_monthly_records(staff, user_id, text):
 
 
 def _line_overtime_start(staff, user_id):
-    """加班 button → Quick Reply with date options."""
+    """加班 button -> Quick Reply with date options."""
     from datetime import date as _dot_s, timedelta as _tdot_s
     WDAY_OT = ['一', '二', '三', '四', '五', '六', '日']
     today = _dot_s.today()
@@ -10288,15 +10303,15 @@ def _line_overtime_start(staff, user_id):
         label = ('昨天 ' if i == -1 else '今天 ' if i == 0 else '明天 ' if i == 1 else '') + \
                 f'{d.strftime("%m/%d")}({WDAY_OT[d.weekday()]})'
         items.append({'label': label, 'text': f'申請加班 {d.isoformat()}'})
-    _send_line_with_quick_reply(user_id, '⏰ 加班申請\n\n請選擇加班日期：', items)
+    _send_line_with_quick_reply(user_id, '⏰ 加班申請\n\n請選擇加班日期:', items)
 
 
 def _line_submit_overtime(staff, user_id, text):
     """
-    LINE 加班申請流程（幾點到幾點）：
-      申請加班 DATE           → Quick Reply 選開始時間
-      申請加班 DATE HH:MM     → Quick Reply 選結束時間
-      申請加班 DATE HH:MM HH:MM → 送出申請
+    LINE 加班申請流程(幾點到幾點):
+      申請加班 DATE           -> Quick Reply 選開始時間
+      申請加班 DATE HH:MM     -> Quick Reply 選結束時間
+      申請加班 DATE HH:MM HH:MM -> 送出申請
     """
     import re as _re_ot
     from datetime import date as _dot, datetime as _dtt
@@ -10310,23 +10325,23 @@ def _line_submit_overtime(staff, user_id, text):
     try:
         _dot.fromisoformat(date_str)
     except ValueError:
-        _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dot.today().isoformat()}')
+        _send_line_punch(user_id, f'日期格式錯誤,請使用 YYYY-MM-DD,例:{_dot.today().isoformat()}')
         return
 
-    # Step 2: date only → select start time
+    # Step 2: date only -> select start time
     if len(parts) == 2:
         start_options = ['08:00','09:00','17:00','18:00','19:00','20:00','21:00','22:00']
         items = [{'label': t, 'text': f'申請加班 {date_str} {t}'} for t in start_options]
         _send_line_with_quick_reply(user_id,
-            f'⏰ 加班申請 · {date_str}\n\n請選擇開始時間：', items)
+            f'⏰ 加班申請 · {date_str}\n\n請選擇開始時間:', items)
         return
 
     start_str = parts[2]
     if not _re_ot.match(r'^\d{2}:\d{2}$', start_str):
-        _send_line_punch(user_id, '時間格式錯誤，請使用 HH:MM，例：18:00')
+        _send_line_punch(user_id, '時間格式錯誤,請使用 HH:MM,例:18:00')
         return
 
-    # Step 3: date + start time → select end time
+    # Step 3: date + start time -> select end time
     if len(parts) == 3:
         sh, sm = map(int, start_str.split(':'))
         end_options = []
@@ -10334,16 +10349,16 @@ def _line_submit_overtime(staff, user_id, text):
             total_m = sh * 60 + sm + int(delta_h * 60)
             eh, em = (total_m // 60) % 24, total_m % 60
             end_options.append(f'{eh:02d}:{em:02d}')
-        items = [{'label': f'至 {t}（+{d}h）', 'text': f'申請加班 {date_str} {start_str} {t}'}
+        items = [{'label': f'至 {t}(+{d}h)', 'text': f'申請加班 {date_str} {start_str} {t}'}
                  for t, d in zip(end_options, [1, 1.5, 2, 2.5, 3, 4, 5, 6])]
         _send_line_with_quick_reply(user_id,
-            f'⏰ 加班申請 · {date_str} {start_str} 開始\n\n請選擇結束時間：', items)
+            f'⏰ 加班申請 · {date_str} {start_str} 開始\n\n請選擇結束時間:', items)
         return
 
-    # Step 4: date + start + end → submit
+    # Step 4: date + start + end -> submit
     end_str = parts[3].strip().split()[0]  # take only first token (HH:MM)
     if not _re_ot.match(r'^\d{2}:\d{2}$', end_str):
-        _send_line_punch(user_id, '時間格式錯誤，請使用 HH:MM，例：20:00')
+        _send_line_punch(user_id, '時間格式錯誤,請使用 HH:MM,例:20:00')
         return
 
     try:
@@ -10355,7 +10370,7 @@ def _line_submit_overtime(staff, user_id, text):
         if hours <= 0 or hours > 24:
             raise ValueError
     except ValueError:
-        _send_line_punch(user_id, '時間計算錯誤，請重新選擇。')
+        _send_line_punch(user_id, '時間計算錯誤,請重新選擇.')
         return
 
     with get_db() as conn:
@@ -10364,34 +10379,34 @@ def _line_submit_overtime(staff, user_id, text):
               (staff_id, request_date, start_time, end_time, ot_hours, reason, status)
             VALUES (%s, %s, %s, %s, %s, %s, 'pending')
             RETURNING id
-        """, (staff['id'], date_str, start_str, end_str, round(hours, 2), '（LINE 加班申請）')).fetchone()
+        """, (staff['id'], date_str, start_str, end_str, round(hours, 2), '(LINE 加班申請)')).fetchone()
 
     _send_line_punch(user_id,
         f'✅ 加班申請已送出\n\n'
-        f'日期：{date_str}\n'
-        f'時段：{start_str} ～ {end_str}（{hours:.1f} 小時）\n'
-        f'申請編號：#{row["id"]}\n\n'
-        '請等候管理員審核，審核結果將通知您。')
+        f'日期:{date_str}\n'
+        f'時段:{start_str} ~ {end_str}({hours:.1f} 小時)\n'
+        f'申請編號:#{row["id"]}\n\n'
+        '請等候管理員審核,審核結果將通知您.')
 
 
 def _line_show_help(staff, user_id):
     _send_line_punch(user_id,
-        f'哈囉 {staff["name"]}！以下是可用的指令：\n\n'
+        f'哈囉 {staff["name"]}!以下是可用的指令:\n\n'
         '─── 打卡 ───\n'
-        '📍 傳送位置 → 自動打卡\n'
+        '📍 傳送位置 -> 自動打卡\n'
         '💬 上班 / 下班 / 休息 / 回來\n'
-        '📋 狀態 → 今日打卡記錄\n\n'
+        '📋 狀態 -> 今日打卡記錄\n\n'
         '─── 查詢 ───\n'
-        '🌿 查餘假 → 本年假期餘額\n'
-        '💰 查薪資 → 最近薪資單\n'
-        '📊 出勤紀錄 → 本月出勤明細\n'
-        '   出勤紀錄 2026-03 → 指定月份\n'
-        '考核 → 最近績效考核\n\n'
+        '🌿 查餘假 -> 本年假期餘額\n'
+        '💰 查薪資 -> 最近薪資單\n'
+        '📊 出勤紀錄 -> 本月出勤明細\n'
+        '   出勤紀錄 2026-03 -> 指定月份\n'
+        '考核 -> 最近績效考核\n\n'
         '─── 申請 ───\n'
-        '📝 請假 [假別] [日期] → 送出請假\n'
-        '   範例：請假 特休 2026-04-01\n'
-        '⏰ 加班 → 選擇日期與時段申請加班\n'
-        '🗂️ 假別 → 查看可用假別清單\n\n'
+        '📝 請假 [假別] [日期] -> 送出請假\n'
+        '   範例:請假 特休 2026-04-01\n'
+        '⏰ 加班 -> 選擇日期與時段申請加班\n'
+        '🗂️ 假別 -> 查看可用假別清單\n\n'
         '─── 其他 ───\n'
         '🔓 解除綁定')
 
@@ -10402,12 +10417,12 @@ def _line_show_leave_types(staff, user_id):
             "SELECT name, max_days FROM leave_types WHERE active=TRUE ORDER BY sort_order"
         ).fetchall()
     if not rows:
-        _send_line_punch(user_id, '目前無可用假別。'); return
+        _send_line_punch(user_id, '目前無可用假別.'); return
     lines = ['🗂️ 可用假別清單\n']
     for r in rows:
-        limit = f'（年限 {r["max_days"]} 天）' if r['max_days'] else ''
+        limit = f'(年限 {r["max_days"]} 天)' if r['max_days'] else ''
         lines.append(f'• {r["name"]} {limit}')
-    lines.append('\n申請方式：請假 [假別] [日期]')
+    lines.append('\n申請方式:請假 [假別] [日期]')
     _send_line_punch(user_id, '\n'.join(lines))
 
 
@@ -10439,7 +10454,7 @@ def mobile_jwt_required(f):
         try:
             payload = _decode_jwt(token)
         except _pyjwt.ExpiredSignatureError:
-            return jsonify({'error': 'token 已過期，請重新登入'}), 401
+            return jsonify({'error': 'token 已過期,請重新登入'}), 401
         except Exception:
             return jsonify({'error': 'token 無效'}), 401
         g.mobile_user = payload
@@ -10604,7 +10619,7 @@ def mobile_punch():
         gps_distance = haversine(float(best['lat']), float(best['lng']), float(lat), float(lng))
         location_name = best['location_name']
         if gps_required and gps_distance > best['radius_m']:
-            return jsonify({'error': f'距離打卡地點 {gps_distance}m，超出範圍 {best["radius_m"]}m'}), 400
+            return jsonify({'error': f'距離打卡地點 {gps_distance}m,超出範圍 {best["radius_m"]}m'}), 400
     elif gps_required:
         return jsonify({'error': '此門市需要 GPS 定位才能打卡'}), 400
 
@@ -10615,7 +10630,7 @@ def mobile_punch():
               AND punched_at >= NOW() - INTERVAL '1 minute'
         """, (staff_id, punch_type)).fetchone()
         if recent:
-            return jsonify({'error': '1 分鐘內已有相同打卡記錄，請勿重複送出'}), 429
+            return jsonify({'error': '1 分鐘內已有相同打卡記錄,請勿重複送出'}), 429
         conn.execute(
             """INSERT INTO punch_records
                (staff_id, punch_type, note, latitude, longitude, gps_distance, location_name)
@@ -11008,7 +11023,7 @@ def mobile_admin_leave_action(lid):
                                   str(old['start_date'])[:4], -float(old['total_days'] or 0))
             _trigger_salary_regen_for_leave(conn, old['staff_id'], str(old['start_date'])[:7])
     _notify_review_result(old['staff_id'], '請假申請', action,
-                          f'{old["start_date"]} ～ {old["end_date"]}')
+                          f'{old["start_date"]} ~ {old["end_date"]}')
     return jsonify({'ok': True})
 
 # ── Admin: Overtime Requests ───────────────────────────────────────────────────
@@ -11099,7 +11114,7 @@ def mobile_admin_anomalies():
     except Exception:
         return jsonify({'error': '月份格式錯誤'}), 400
     import calendar
-    # 計算當月實際工作日（週一到週五）
+    # 計算當月實際工作日(週一到週五)
     total_days = calendar.monthrange(y, m)[1]
     from datetime import date as _dam
     weekday_count = sum(
@@ -11136,7 +11151,7 @@ def mobile_admin_anomalies():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WebAuthn (Face ID / 指紋) — 網頁生物辨識登入
+# WebAuthn (Face ID / 指紋) - 網頁生物辨識登入
 # ═══════════════════════════════════════════════════════════════════════════════
 import base64 as _b64
 import struct as _struct
@@ -11147,7 +11162,7 @@ _WEBAUTHN_RP_NAME = '打卡系統'
 _WEBAUTHN_ORIGIN  = os.environ.get('WEBAUTHN_ORIGIN', '')
 
 def _get_webauthn_rp_and_origin():
-    """從環境變數讀取，若未設定則從當前 request 自動偵測。"""
+    """從環境變數讀取,若未設定則從當前 request 自動偵測."""
     rp_id  = _WEBAUTHN_RP_ID
     origin = _WEBAUTHN_ORIGIN
     if not rp_id or not origin:
@@ -11193,8 +11208,8 @@ _init_webauthn_db()
 
 @app.route('/api/webauthn/register/begin', methods=['POST'])
 def webauthn_register_begin():
-    """登入後呼叫：產生 WebAuthn 註冊挑戰"""
-    # 判斷來源：session admin 或 session staff
+    """登入後呼叫:產生 WebAuthn 註冊挑戰"""
+    # 判斷來源:session admin 或 session staff
     user_key = None
     user_name = None
     user_display = None
@@ -11234,7 +11249,7 @@ def webauthn_register_begin():
         ],
         'timeout': 60000,
         'authenticatorSelection': {
-            'authenticatorAttachment': 'platform',   # 僅使用裝置內建（Face ID / 指紋）
+            'authenticatorAttachment': 'platform',   # 僅使用裝置內建(Face ID / 指紋)
             'userVerification': 'required',
             'residentKey': 'preferred',
         },
@@ -11252,7 +11267,7 @@ def webauthn_register_complete():
     rp_id         = session.get('webauthn_reg_rp_id') or _WEBAUTHN_RP_ID
     origin        = session.get('webauthn_reg_origin') or _WEBAUTHN_ORIGIN
     if not challenge_b64 or not user_key:
-        return jsonify({'error': '找不到挑戰，請重新開始'}), 400
+        return jsonify({'error': '找不到挑戰,請重新開始'}), 400
 
     b = request.get_json(force=True) or {}
     try:
@@ -11315,7 +11330,7 @@ def webauthn_register_complete():
         return jsonify({'ok': True})
 
     except Exception as ex:
-        return jsonify({'error': f'綁定失敗：{ex}'}), 400
+        return jsonify({'error': f'綁定失敗:{ex}'}), 400
 
 # ── Authentication Begin ───────────────────────────────────────────────────────
 
@@ -11348,7 +11363,7 @@ def webauthn_auth_begin():
             allow_credentials = [{'type': 'public-key', 'id': r['credential_id']} for r in creds]
 
     if not allow_credentials and not username:
-        # Discoverable credential (resident key) — no allowCredentials needed
+        # Discoverable credential (resident key) - no allowCredentials needed
         pass
 
     rp_id, origin = _get_webauthn_rp_and_origin()
@@ -11375,7 +11390,7 @@ def webauthn_auth_complete():
     rp_id         = session.get('webauthn_auth_rp_id') or _WEBAUTHN_RP_ID
     origin        = session.get('webauthn_auth_origin') or _WEBAUTHN_ORIGIN
     if not challenge_b64:
-        return jsonify({'error': '找不到挑戰，請重新開始'}), 400
+        return jsonify({'error': '找不到挑戰,請重新開始'}), 400
 
     b = request.get_json(force=True) or {}
     try:
@@ -11404,7 +11419,7 @@ def webauthn_auth_complete():
                 "SELECT * FROM webauthn_credentials WHERE credential_id=%s", (credential_id,)
             ).fetchone()
         if not cred:
-            return jsonify({'error': '找不到已綁定的裝置，請先綁定'}), 401
+            return jsonify({'error': '找不到已綁定的裝置,請先綁定'}), 401
 
         # Verify signature using stored COSE public key
         client_data_hash = _hs3.sha256(client_data).digest()
@@ -11460,7 +11475,7 @@ def webauthn_auth_complete():
         return jsonify({'error': '未知帳號類型'}), 400
 
     except Exception as ex:
-        return jsonify({'error': f'驗證失敗：{ex}'}), 400
+        return jsonify({'error': f'驗證失敗:{ex}'}), 400
 
 # ── 已綁定裝置列表 & 刪除 ────────────────────────────────────────────────────────
 
@@ -11497,7 +11512,7 @@ def webauthn_delete_credential(cid):
 # ── Crypto helpers ─────────────────────────────────────────────────────────────
 
 def _verify_cose_signature(cose_key_bytes: bytes, message: bytes, signature: bytes):
-    """驗證 COSE 格式公鑰的簽名（支援 ES256 / RS256）"""
+    """驗證 COSE 格式公鑰的簽名(支援 ES256 / RS256)"""
     try:
         import cbor2
         cose = cbor2.loads(cose_key_bytes)
@@ -11537,7 +11552,7 @@ def _verify_cose_signature(cose_key_bytes: bytes, message: bytes, signature: byt
         raise ValueError(f'Unsupported alg: {alg}')
 
 def _minimal_cbor_decode(data: bytes) -> dict:
-    """極簡 CBOR map decoder（僅處理 attestation none 格式所需）"""
+    """極簡 CBOR map decoder(僅處理 attestation none 格式所需)"""
     import io
     buf = io.BytesIO(data)
     return _cbor_read(buf)
