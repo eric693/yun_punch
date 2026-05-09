@@ -11,6 +11,11 @@ from functools import wraps
 
 import psycopg
 from psycopg.rows import dict_row
+try:
+    from psycopg_pool import ConnectionPool as _ConnectionPool
+    _pool_available = True
+except ImportError:
+    _pool_available = False
 from flask import (
     Flask, request, jsonify, render_template,
     session, redirect, url_for, abort
@@ -47,7 +52,25 @@ WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
 
 # ─── PostgreSQL ───────────────────────────────────────────────────────────────
 
+_pool = None
+
+def _init_pool():
+    global _pool
+    if _pool_available and DATABASE_URL:
+        try:
+            _pool = _ConnectionPool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=10,
+                kwargs={'row_factory': dict_row},
+            )
+            print("[OK] Connection pool initialised")
+        except Exception as e:
+            print(f"[WARN] Pool init failed, falling back to direct connect: {e}")
+
 def get_db():
+    if _pool is not None:
+        return _pool.connection()
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 def _hash_pw(pw):
@@ -320,6 +343,30 @@ def init_db():
             created_at      TIMESTAMPTZ DEFAULT NOW(),
             last_login_at   TIMESTAMPTZ
         )""",
+        # ── 效能索引 ──────────────────────────────────────────────────────────
+        # punch_records: 最常被查詢的資料表，依 staff_id + punched_at 過濾
+        "CREATE INDEX IF NOT EXISTS idx_pr_staff_at   ON punch_records(staff_id, punched_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_pr_at          ON punch_records(punched_at DESC)",
+        # leave_requests: 依員工 + 日期 + 狀態過濾
+        "CREATE INDEX IF NOT EXISTS idx_lr_staff_date  ON leave_requests(staff_id, start_date)",
+        "CREATE INDEX IF NOT EXISTS idx_lr_status      ON leave_requests(status)",
+        # overtime_requests
+        "CREATE INDEX IF NOT EXISTS idx_ot_staff_date  ON overtime_requests(staff_id, request_date)",
+        "CREATE INDEX IF NOT EXISTS idx_ot_status      ON overtime_requests(status)",
+        # salary_records: 月份批次查詢
+        "CREATE INDEX IF NOT EXISTS idx_sr_month       ON salary_records(month)",
+        # punch_staff: LINE bot 依 line_user_id 查詢
+        "CREATE INDEX IF NOT EXISTS idx_ps_line_uid    ON punch_staff(line_user_id) WHERE line_user_id IS NOT NULL",
+        # punch_requests
+        "CREATE INDEX IF NOT EXISTS idx_pq_staff_status ON punch_requests(staff_id, status)",
+        # shift_assignments: 排班日期查詢
+        "CREATE INDEX IF NOT EXISTS idx_sa_date        ON shift_assignments(shift_date)",
+        # finance_records
+        "CREATE INDEX IF NOT EXISTS idx_fr_date        ON finance_records(record_date)",
+        # schedule_requests: 月份查詢
+        "CREATE INDEX IF NOT EXISTS idx_schedr_month   ON schedule_requests(month)",
+        # leave_balances
+        "CREATE INDEX IF NOT EXISTS idx_lb_staff_year  ON leave_balances(staff_id, year)",
     ]
     for sql in migrations:
         try:
@@ -363,6 +410,7 @@ def init_db():
     print("[OK] Database initialised")
 
 
+_init_pool()
 init_db()
 
 # ─── Keep-Alive ───────────────────────────────────────────────────────────────
