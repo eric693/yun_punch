@@ -27,7 +27,8 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 .card-title{font-size:14px;font-weight:700;color:var(--navy)}
 .login-title{font-size:15px;font-weight:700;color:var(--navy);margin-bottom:16px}
 .fl{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px}
-.fi{width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:9px;font-family:"Noto Sans TC",sans-serif;font-size:15px;color:var(--text);outline:none;transition:border-color .15s;margin-bottom:12px;background:#fff}
+.fg{margin-bottom:14px}
+.fi{width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:9px;font-family:"Noto Sans TC",sans-serif;font-size:15px;color:var(--text);outline:none;transition:border-color .15s;margin-bottom:0;background:#fff}
 .fi:focus{border-color:var(--accent)}
 .login-btn{width:100%;padding:13px;border-radius:9px;border:none;background:var(--navy);color:#fff;font-family:"Noto Sans TC",sans-serif;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .15s}
 .login-btn:active{opacity:.85}
@@ -146,10 +147,8 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
   <div class="card" id="screen-login">
     <div class="card-body">
       <div class="login-title">員工登入</div>
-      <div class="fl">帳號</div>
-      <input class="fi" type="text" id="inp-user" placeholder="請輸入帳號" autocapitalize="none" spellcheck="false" autocomplete="username">
-      <div class="fl">密碼</div>
-      <input class="fi" type="password" id="inp-pass" placeholder="請輸入密碼" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      <div class="fg"><div class="fl">帳號</div><input class="fi" type="text" id="inp-user" placeholder="請輸入帳號" autocapitalize="none" spellcheck="false" autocomplete="username"></div>
+      <div class="fg"><div class="fl">密碼</div><input class="fi" type="password" id="inp-pass" placeholder="請輸入密碼" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
       <button class="login-btn" id="login-btn" onclick="doLogin()">登入</button>
       <!-- WebAuthn biometric (shown only when supported) -->
       <div id="bio-sep" style="display:none;margin-top:12px">
@@ -214,20 +213,20 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         </div>
         <div id="req-panel" style="display:none;padding:16px 20px;border-top:1px solid var(--border)">
           <div class="section-label" style="margin-bottom:12px">補打卡申請</div>
-          <div style="margin-bottom:10px">
+          <div class="fg">
             <div class="fl">打卡類型</div>
-            <select class="fi" id="req-type" style="margin-bottom:8px">
+            <select class="fi" id="req-type">
               <option value="in">上班打卡</option><option value="out">下班打卡</option>
               <option value="break_out">休息開始</option><option value="break_in">休息結束</option>
             </select>
           </div>
-          <div style="margin-bottom:10px">
+          <div class="fg">
             <div class="fl">補打時間</div>
-            <input class="fi" type="datetime-local" id="req-time" style="margin-bottom:8px">
+            <input class="fi" type="datetime-local" id="req-time">
           </div>
-          <div style="margin-bottom:14px">
+          <div class="fg">
             <div class="fl">原因 *</div>
-            <input class="fi" id="req-reason" placeholder="例：忘記打卡、手機沒電" style="margin-bottom:0">
+            <input class="fi" id="req-reason" placeholder="例：忘記打卡、手機沒電">
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-outline" style="flex:1" onclick="hideReqPanel()">取消</button>
@@ -296,22 +295,22 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         </div>
         <div style="background:#fff;border-radius:10px;border:1.5px solid var(--border);padding:16px;margin-bottom:16px">
           <div class="section-label" style="margin-bottom:12px">新增加班申請</div>
-          <div style="margin-bottom:10px"><div class="fl">加班日期</div><input class="fi" type="date" id="ot-date" style="margin-bottom:8px"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-            <div><div class="fl">開始時間</div><input class="fi" type="time" id="ot-start" style="margin-bottom:0"></div>
-            <div><div class="fl">結束時間</div><input class="fi" type="time" id="ot-end" style="margin-bottom:0"></div>
+          <div class="fg"><div class="fl">加班日期</div><input class="fi" type="date" id="ot-date"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+            <div><div class="fl">開始時間</div><input class="fi" type="time" id="ot-start"></div>
+            <div><div class="fl">結束時間</div><input class="fi" type="time" id="ot-end"></div>
           </div>
           <div id="ot-hours-preview" style="font-size:12px;color:var(--accent);margin-bottom:10px;min-height:16px"></div>
-          <div style="margin-bottom:10px">
+          <div class="fg">
             <div class="fl">加班日別</div>
-            <select class="fi" id="ot-day-type" onchange="updateOTHoursPreview()" style="margin-bottom:0">
+            <select class="fi" id="ot-day-type" onchange="updateOTHoursPreview()">
               <option value="weekday">平日（前2h×1.33，後續×1.67）</option>
               <option value="rest_day">休息日（最少4h）</option>
               <option value="holiday">國定假日（全程×2倍）</option>
               <option value="special">例假日（全程×2倍）</option>
             </select>
           </div>
-          <div style="margin-bottom:14px"><div class="fl">加班原因 *</div><input class="fi" id="ot-reason" placeholder="例：客戶急件、備料作業" style="margin-bottom:0"></div>
+          <div class="fg"><div class="fl">加班原因 *</div><input class="fi" id="ot-reason" placeholder="例：客戶急件、備料作業"></div>
           <button class="btn btn-primary" style="width:100%" onclick="submitOTRequest()">送出加班申請</button>
         </div>
         <div class="section-label" style="margin-bottom:10px">我的申請記錄</div>
@@ -341,24 +340,24 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <!-- 新增請假申請 -->
         <div style="background:#fff;border-radius:10px;border:1.5px solid var(--border);padding:16px;margin-bottom:16px">
           <div class="section-label" style="margin-bottom:12px">新增請假申請</div>
-          <div style="margin-bottom:10px">
+          <div class="fg">
             <div class="fl">假別 *</div>
-            <select class="fi" id="leave-type-sel" style="width:100%;margin-bottom:0" onchange="_onLeaveTypeChange()"></select>
+            <select class="fi" id="leave-type-sel" onchange="_onLeaveTypeChange()"></select>
           </div>
           <div id="leave-type-info" style="font-size:12px;color:var(--muted);margin-bottom:10px;min-height:16px"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-            <div><div class="fl">開始日期 *</div><input class="fi" type="date" id="leave-start" style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
-            <div><div class="fl">結束日期 *</div><input class="fi" type="date" id="leave-end"   style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+            <div><div class="fl">開始日期 *</div><input class="fi" type="date" id="leave-start" onchange="previewLeaveStaff()"></div>
+            <div><div class="fl">結束日期 *</div><input class="fi" type="date" id="leave-end" onchange="previewLeaveStaff()"></div>
           </div>
-          <div style="display:flex;gap:16px;margin-bottom:10px">
+          <div style="display:flex;gap:16px;margin-bottom:12px">
             <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-start-half" onchange="previewLeaveStaff()"> 開始日下午請假</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-end-half"   onchange="previewLeaveStaff()"> 結束日上午請假</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-end-half" onchange="previewLeaveStaff()"> 結束日上午請假</label>
           </div>
           <div id="leave-days-preview" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px;min-height:18px"></div>
-          <div id="leave-balance-info" style="font-size:12px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:6px;min-height:32px"></div>
-          <button class="btn btn-outline" style="width:100%;font-size:12px;margin-bottom:10px" onclick="showMyAnnualSchedule()">查看我的特休排程</button>
-          <div style="margin-bottom:10px"><div class="fl">請假原因 *</div><input class="fi" id="leave-reason" placeholder="例：身體不適、家庭事務" style="margin-bottom:0"></div>
-          <div style="margin-bottom:14px"><div class="fl">代理人（選填）</div><input class="fi" id="leave-sub" placeholder="例：王小明" style="margin-bottom:0"></div>
+          <div id="leave-balance-info" style="font-size:12px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:10px;min-height:32px"></div>
+          <button class="btn btn-outline" style="width:100%;font-size:12px;margin-bottom:14px" onclick="showMyAnnualSchedule()">查看我的特休排程</button>
+          <div class="fg"><div class="fl">請假原因 *</div><input class="fi" id="leave-reason" placeholder="例：身體不適、家庭事務"></div>
+          <div class="fg"><div class="fl">代理人（選填）</div><input class="fi" id="leave-sub" placeholder="例：王小明"></div>
           <!-- 病假病單上傳 -->
           <div id="leave-cert-section" style="display:none;margin-bottom:14px;padding:12px;background:var(--bg);border-radius:8px;border:1.5px dashed var(--border)">
             <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">病假需上傳病單</div>
@@ -430,27 +429,26 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <div class="card" style="margin-bottom:14px">
           <div class="card-header"><span class="card-title">新增費用申請</span></div>
           <div style="padding:12px 16px">
-            <div style="margin-bottom:10px">
-              <div class="fl">費用日期</div>
-              <input class="fi" type="date" id="exp-date" style="margin-bottom:8px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <div><div class="fl">費用日期</div><input class="fi" type="date" id="exp-date"></div>
+              <div>
+                <div class="fl">費用類型</div>
+                <select class="fi" id="exp-category">
+                  <option value="餐費">餐費</option>
+                  <option value="交通費">交通費</option>
+                  <option value="住宿費">住宿費</option>
+                  <option value="辦公用品">辦公用品</option>
+                  <option value="其他">其他</option>
+                </select>
+              </div>
             </div>
-            <div style="margin-bottom:10px">
-              <div class="fl">費用類型</div>
-              <select class="fi" id="exp-category" style="margin-bottom:8px">
-                <option value="餐費">餐費</option>
-                <option value="交通費">交通費</option>
-                <option value="住宿費">住宿費</option>
-                <option value="辦公用品">辦公用品</option>
-                <option value="其他">其他</option>
-              </select>
-            </div>
-            <div style="margin-bottom:10px">
+            <div class="fg">
               <div class="fl">金額（元）</div>
-              <input class="fi" type="number" id="exp-amount" placeholder="0" min="0" style="margin-bottom:8px">
+              <input class="fi" type="number" id="exp-amount" placeholder="0" min="0">
             </div>
-            <div style="margin-bottom:10px">
+            <div class="fg">
               <div class="fl">說明</div>
-              <input class="fi" type="text" id="exp-note" placeholder="費用說明（選填）" style="margin-bottom:8px">
+              <input class="fi" type="text" id="exp-note" placeholder="費用說明（選填）">
             </div>
             <!-- 發票/收據上傳 -->
             <div style="margin-bottom:14px">
