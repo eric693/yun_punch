@@ -50,6 +50,22 @@ TW_TZ = _tz(_td(hours=8))   # Asia/Taipei (UTC+8)
 
 WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
 
+import calendar as _calendar
+from datetime import date as _date_cls
+
+def _month_ts_range(month: str):
+    """'YYYY-MM' → (start, end) TIMESTAMPTZ (UTC+8)，用於 punched_at >= %s AND punched_at < %s"""
+    y, m = int(month[:4]), int(month[5:7])
+    start = _dt(y, m, 1, tzinfo=TW_TZ)
+    end   = _dt(y + 1, 1, 1, tzinfo=TW_TZ) if m == 12 else _dt(y, m + 1, 1, tzinfo=TW_TZ)
+    return start, end
+
+def _month_date_range(month: str):
+    """'YYYY-MM' → (first_date, first_date_of_next_month)，用於 date >= %s AND date < %s"""
+    y, m = int(month[:4]), int(month[5:7])
+    last_day = _calendar.monthrange(y, m)[1]
+    return _date_cls(y, m, 1), _date_cls(y, m, last_day) + _td(days=1)
+
 # ─── PostgreSQL ───────────────────────────────────────────────────────────────
 
 _pool = None
@@ -1088,14 +1104,15 @@ def api_punch_my_records():
     if not month:
         from datetime import timezone as _tz, timedelta as _tda
         month = _dt.now(_tz(_tda(hours=8))).strftime('%Y-%m')
+    _ts_s, _ts_e = _month_ts_range(month)
     with get_db() as conn:
         rows = conn.execute("""
             SELECT punch_type, punched_at, gps_distance, location_name, is_manual
             FROM punch_records
             WHERE staff_id=%s
-              AND to_char(punched_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM') = %s
+              AND punched_at >= %s AND punched_at < %s
             ORDER BY punched_at ASC
-        """, (sid, month)).fetchall()
+        """, (sid, _ts_s, _ts_e)).fetchall()
     from datetime import timezone as _tz2, timedelta as _tdb
     TW = _tz2(_tdb(hours=8))
     LABEL = {'in': '上班', 'out': '下班', 'break_out': '休息開始', 'break_in': '休息結束'}
@@ -2467,7 +2484,9 @@ def api_shift_assignments_list():
     month = request.args.get('month', '')
     conds, params = ['TRUE'], []
     if month:
-        conds.append("to_char(sa.shift_date,'YYYY-MM')=%s"); params.append(month)
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('sa.shift_date >= %s AND sa.shift_date < %s')
+        params.extend([_d_s, _d_e])
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT sa.*,
@@ -2987,9 +3006,9 @@ def api_my_shift_schedule():
             FROM shift_assignments sa
             JOIN shift_types st ON st.id=sa.shift_type_id
             WHERE sa.staff_id=%s
-              AND to_char(sa.shift_date,'YYYY-MM')=%s
+              AND sa.shift_date >= %s AND sa.shift_date < %s
             ORDER BY sa.shift_date
-        """, (sid, month)).fetchall()
+        """, (sid, *_month_date_range(month))).fetchall()
     result = {}
     for r in rows:
         ds = r['shift_date'].isoformat()
@@ -3057,8 +3076,11 @@ def api_ot_admin_list():
     status = request.args.get('status', '')
     month  = request.args.get('month', '')
     conds, params = ['TRUE'], []
-    if status: conds.append('r.status=%s');                          params.append(status)
-    if month:  conds.append("to_char(r.request_date,'YYYY-MM')=%s"); params.append(month)
+    if status: conds.append('r.status=%s'); params.append(status)
+    if month:
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('r.request_date >= %s AND r.request_date < %s')
+        params.extend([_d_s, _d_e])
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT r.*, ps.name as staff_name, ps.role as staff_role
@@ -3193,10 +3215,10 @@ def api_ot_monthly_summary():
                 COUNT(CASE WHEN r.status='rejected' THEN 1 END)               AS rejected_count
             FROM overtime_requests r
             JOIN punch_staff ps ON ps.id = r.staff_id
-            WHERE to_char(r.request_date, 'YYYY-MM') = %s
+            WHERE r.request_date >= %s AND r.request_date < %s
             GROUP BY ps.id, ps.name, ps.role
             ORDER BY total_hours DESC
-        """, (month,)).fetchall()
+        """, _month_date_range(month)).fetchall()
     return jsonify([{
         'staff_id':       r['staff_id'],
         'staff_name':     r['staff_name'],
@@ -3604,9 +3626,12 @@ def api_leave_requests_list():
     month    = request.args.get('month', '')
     staff_id = request.args.get('staff_id', '')
     conds, params = ['TRUE'], []
-    if status:   conds.append('lr.status=%s');                            params.append(status)
-    if staff_id: conds.append('lr.staff_id=%s');                          params.append(int(staff_id))
-    if month:    conds.append("to_char(lr.start_date,'YYYY-MM')=%s");     params.append(month)
+    if status:   conds.append('lr.status=%s'); params.append(status)
+    if staff_id: conds.append('lr.staff_id=%s'); params.append(int(staff_id))
+    if month:
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('lr.start_date >= %s AND lr.start_date < %s')
+        params.extend([_d_s, _d_e])
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT lr.*, ps.name as staff_name, ps.role as staff_role,
@@ -3965,15 +3990,16 @@ def api_leave_balance_update(bid):
 def api_leave_summary(staff_id, month):
     """取得員工某月請假摘要（供薪資計算用）"""
     with get_db() as conn:
+        _d_s, _d_e = _month_date_range(month)
         rows = conn.execute("""
             SELECT lr.*, lt.name as leave_type_name, lt.code, lt.pay_rate
             FROM leave_requests lr
             JOIN leave_types lt ON lt.id=lr.leave_type_id
             WHERE lr.staff_id=%s
               AND lr.status='approved'
-              AND to_char(lr.start_date,'YYYY-MM')=%s
+              AND lr.start_date >= %s AND lr.start_date < %s
             ORDER BY lr.start_date
-        """, (staff_id, month)).fetchall()
+        """, (staff_id, _d_s, _d_e)).fetchall()
     total_leave_days = 0.0
     unpaid_days      = 0.0
     half_pay_days    = 0.0
@@ -4193,13 +4219,14 @@ def _calc_punch_hours(conn, staff_id, month):
     from datetime import datetime as _dth, timezone as _tzh, timedelta as _tdh
     TW = _tzh(_tdh(hours=8))
 
+    _ts_s, _ts_e = _month_ts_range(month)
     rows = conn.execute("""
         SELECT punch_type, punched_at
         FROM punch_records
         WHERE staff_id=%s
-          AND to_char(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+          AND punched_at >= %s AND punched_at < %s
         ORDER BY punched_at ASC
-    """, (staff_id, month)).fetchall()
+    """, (staff_id, _ts_s, _ts_e)).fetchall()
 
     # Group by date
     day_map = {}
@@ -4282,13 +4309,16 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     total_work_days = work_days
     scheduled_dates = set()
 
+    _sal_d_s, _sal_d_e = _month_date_range(month)
+    _sal_ts_s, _sal_ts_e = _month_ts_range(month)
+
     if total_work_days is None:
         # 1. 優先從排班取工作日
         shift_date_rows = conn.execute("""
             SELECT DISTINCT shift_date FROM shift_assignments
-            WHERE staff_id=%s AND TO_CHAR(shift_date,'YYYY-MM')=%s
+            WHERE staff_id=%s AND shift_date >= %s AND shift_date < %s
             ORDER BY shift_date
-        """, (staff['id'], month)).fetchall()
+        """, (staff['id'], _sal_d_s, _sal_d_e)).fetchall()
         if shift_date_rows:
             scheduled_dates = {r['shift_date'].isoformat() if hasattr(r['shift_date'], 'isoformat') else str(r['shift_date']) for r in shift_date_rows}
             total_work_days = len(scheduled_dates)
@@ -4296,8 +4326,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             # 2. 備援：日曆扣除週日 + 國定假日
             holiday_rows = conn.execute("""
                 SELECT date FROM public_holidays
-                WHERE TO_CHAR(date,'YYYY-MM')=%s
-            """, (month,)).fetchall()
+                WHERE date >= %s AND date < %s
+            """, (_sal_d_s, _sal_d_e)).fetchall()
             holiday_dates = {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in holiday_rows}
             days_in_month = _cal2.monthrange(y, m)[1]
             for _d in range(1, days_in_month + 1):
@@ -4332,8 +4362,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         SELECT COALESCE(SUM(ot_pay), 0) as total
         FROM overtime_requests
         WHERE staff_id=%s AND status='approved'
-          AND to_char(request_date,'YYYY-MM')=%s
-    """, (staff['id'], month)).fetchone()
+          AND request_date >= %s AND request_date < %s
+    """, (staff['id'], _sal_d_s, _sal_d_e)).fetchone()
     ot_pay = float(ot_rows['total']) if ot_rows else 0.0
 
     # ── 請假資訊 ────────────────────────────────────────────
@@ -4342,8 +4372,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         FROM leave_requests lr
         JOIN leave_types lt ON lt.id = lr.leave_type_id
         WHERE lr.staff_id=%s AND lr.status='approved'
-          AND to_char(lr.start_date,'YYYY-MM')=%s
-    """, (staff['id'], month)).fetchall()
+          AND lr.start_date >= %s AND lr.start_date < %s
+    """, (staff['id'], _sal_d_s, _sal_d_e)).fetchall()
     leave_days    = sum(float(r['total_days']) for r in leave_rows)
     unpaid_days   = sum(float(r['total_days']) for r in leave_rows if float(r['pay_rate']) == 0)
     half_pay_days = sum(float(r['total_days']) for r in leave_rows if 0 < float(r['pay_rate']) < 1)
@@ -4372,8 +4402,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         _punch_rows_pre = conn.execute("""
             SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
             FROM punch_records WHERE staff_id=%s
-              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
-        """, (staff['id'], month)).fetchall()
+              AND punched_at >= %s AND punched_at < %s
+        """, (staff['id'], _sal_ts_s, _sal_ts_e)).fetchall()
         _punched_dates_pre = {
             r['work_date'].isoformat() if hasattr(r['work_date'], 'isoformat') else str(r['work_date'])
             for r in _punch_rows_pre
@@ -4381,8 +4411,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         _leave_date_rows_pre = conn.execute("""
             SELECT start_date, end_date FROM leave_requests
             WHERE staff_id=%s AND status='approved'
-              AND TO_CHAR(start_date,'YYYY-MM')=%s
-        """, (staff['id'], month)).fetchall()
+              AND start_date >= %s AND start_date < %s
+        """, (staff['id'], _sal_d_s, _sal_d_e)).fetchall()
         _leave_date_set_pre = set()
         for _lr in _leave_date_rows_pre:
             _ld = _lr['start_date']
@@ -5157,7 +5187,8 @@ def api_holidays_public():
     if year:
         conds.append("EXTRACT(YEAR FROM date)=%s"); params.append(int(year))
     if month:
-        conds.append("to_char(date,'YYYY-MM')=%s"); params.append(month)
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('date >= %s AND date < %s'); params.extend([_d_s, _d_e])
     with get_db() as conn:
         rows = conn.execute(
             f"SELECT date, name FROM public_holidays WHERE {' AND '.join(conds)} ORDER BY date",
@@ -5633,7 +5664,9 @@ def api_export_leave():
     staff_id = request.args.get('staff_id', '')
 
     conds, params = ['lr.status=%s'], ['approved']
-    if month: conds.append("to_char(lr.start_date,'YYYY-MM')=%s"); params.append(month)
+    if month:
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('lr.start_date >= %s AND lr.start_date < %s'); params.extend([_d_s, _d_e])
     if year:  conds.append("EXTRACT(YEAR FROM lr.start_date)=%s"); params.append(int(year))
     if staff_id: conds.append("lr.staff_id=%s"); params.append(int(staff_id))
 
@@ -5847,15 +5880,16 @@ def api_dashboard():
         # ── 本月出勤統計（每天出勤人數，用於折線圖）─────────────
         import calendar as _cal
         days_in_month = _cal.monthrange(today.year, today.month)[1]
+        _db_ts_s, _db_ts_e = _month_ts_range(month)
         daily_rows = conn.execute("""
             SELECT (punched_at AT TIME ZONE 'Asia/Taipei')::date as d,
                    COUNT(DISTINCT staff_id) as cnt
             FROM punch_records
             WHERE punch_type='in'
-              AND to_char(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+              AND punched_at >= %s AND punched_at < %s
             GROUP BY (punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY d
-        """, (month,)).fetchall()
+        """, (_db_ts_s, _db_ts_e)).fetchall()
         daily_map = {str(r['d']): r['cnt'] for r in daily_rows}
         daily_attendance = []
         for day in range(1, days_in_month + 1):
@@ -5876,10 +5910,10 @@ def api_dashboard():
             FROM leave_requests lr
             JOIN leave_types lt ON lt.id = lr.leave_type_id
             WHERE lr.status='approved'
-              AND to_char(lr.start_date,'YYYY-MM')=%s
+              AND lr.start_date >= %s AND lr.start_date < %s
             GROUP BY lt.name, lt.color
             ORDER BY days DESC
-        """, (month,)).fetchall()
+        """, _month_date_range(month)).fetchall()
         leave_distribution = [
             {'name': r['name'], 'color': r['color'], 'count': r['cnt'], 'days': float(r['days'])}
             for r in leave_dist_rows
@@ -5893,11 +5927,11 @@ def api_dashboard():
             FROM overtime_requests r
             JOIN punch_staff ps ON ps.id = r.staff_id
             WHERE r.status='approved'
-              AND to_char(r.request_date,'YYYY-MM')=%s
+              AND r.request_date >= %s AND r.request_date < %s
             GROUP BY ps.name, ps.role
             ORDER BY total_pay DESC
             LIMIT 8
-        """, (month,)).fetchall()
+        """, _month_date_range(month)).fetchall()
         ot_ranking = [
             {'name': r['name'], 'role': r['role'] or '', 'pay': float(r['total_pay']), 'hours': float(r['total_hours'])}
             for r in ot_rank_rows
@@ -5985,14 +6019,15 @@ def api_dashboard_attendance_heatmap():
             "SELECT COUNT(*) as c FROM punch_staff WHERE active=TRUE"
         ).fetchone()['c']
 
+        _db2_ts_s, _db2_ts_e = _month_ts_range(month)
         punch_rows = conn.execute("""
             SELECT (punched_at AT TIME ZONE 'Asia/Taipei')::date as d,
                    COUNT(DISTINCT staff_id) as cnt
             FROM punch_records
             WHERE punch_type='in'
-              AND to_char(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+              AND punched_at >= %s AND punched_at < %s
             GROUP BY d
-        """, (month,)).fetchall()
+        """, (_db2_ts_s, _db2_ts_e)).fetchall()
 
         leave_rows = conn.execute("""
             SELECT lr.start_date, lr.end_date, COUNT(*) as cnt
@@ -6482,18 +6517,18 @@ def api_auto_generate_schedule():
         """, (f'{y}-{mo:02d}-{days_in:02d}', f'{y}-{mo:02d}-01')).fetchall()
 
         # 已核准排休
+        _sched_d_s, _sched_d_e = _month_date_range(month)
         sched_rows = conn.execute("""
             SELECT staff_id, requested_dates
             FROM schedule_requests
-            WHERE status='approved'
-              AND to_char(created_at,'YYYY-MM')=%s
+            WHERE status='approved' AND month=%s
         """, (month,)).fetchall()
 
         # 現有班表
         existing = conn.execute("""
             SELECT staff_id, shift_date FROM shift_assignments
-            WHERE TO_CHAR(shift_date,'YYYY-MM')=%s
-        """, (month,)).fetchall()
+            WHERE shift_date >= %s AND shift_date < %s
+        """, (_sched_d_s, _sched_d_e)).fetchall()
 
     # 建立不可上班日 set: {(staff_id, date_str)}
     off_days = set()
@@ -7482,7 +7517,8 @@ def api_finance_records_list():
     cat_id = request.args.get('category_id', '')
     conds, params = ['TRUE'], []
     if month:
-        conds.append("to_char(fr.record_date,'YYYY-MM')=%s"); params.append(month)
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('fr.record_date >= %s AND fr.record_date < %s'); params.extend([_d_s, _d_e])
     if ftype:
         conds.append("fr.type=%s"); params.append(ftype)
     if cat_id:
@@ -7580,11 +7616,13 @@ def api_finance_summary(year, month):
     period = f"{year}-{month.zfill(2)}"
     with get_db() as conn:
         totals = conn.execute("""
+        _fin_d_s, _fin_d_e = _month_date_range(period)
+        totals = conn.execute("""
             SELECT type, COALESCE(SUM(amount),0) as total
             FROM finance_records
-            WHERE to_char(record_date,'YYYY-MM')=%s
+            WHERE record_date >= %s AND record_date < %s
             GROUP BY type
-        """, (period,)).fetchall()
+        """, (_fin_d_s, _fin_d_e)).fetchall()
         income  = next((float(r['total']) for r in totals if r['type']=='income'), 0.0)
         expense = next((float(r['total']) for r in totals if r['type']=='expense'), 0.0)
 
@@ -7592,10 +7630,10 @@ def api_finance_summary(year, month):
             SELECT fc.name, fc.color, fr.type, COALESCE(SUM(fr.amount),0) as total
             FROM finance_records fr
             LEFT JOIN finance_categories fc ON fc.id=fr.category_id
-            WHERE to_char(fr.record_date,'YYYY-MM')=%s
+            WHERE fr.record_date >= %s AND fr.record_date < %s
             GROUP BY fc.name, fc.color, fr.type
             ORDER BY total DESC
-        """, (period,)).fetchall()
+        """, (_fin_d_s, _fin_d_e)).fetchall()
 
         # Last 6 months trend
         trend = conn.execute("""
@@ -7697,7 +7735,8 @@ def api_finance_export():
     month = request.args.get('month', '')
     conds, params = ['TRUE'], []
     if month:
-        conds.append("to_char(fr.record_date,'YYYY-MM')=%s"); params.append(month)
+        _d_s, _d_e = _month_date_range(month)
+        conds.append('fr.record_date >= %s AND fr.record_date < %s'); params.extend([_d_s, _d_e])
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT fr.record_date, fr.type, fr.title, fr.amount, fr.tax_amount,
@@ -7987,16 +8026,16 @@ def api_salary_preview():
             data = _auto_generate_salary(conn, dict(staff), month)
             # punch attendance days this month
             punch_days = conn.execute("""
-                SELECT COUNT(DISTINCT punched_at::date) AS n
+                SELECT COUNT(DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date) AS n
                 FROM punch_records WHERE staff_id=%s
-                  AND to_char(punched_at,'YYYY-MM')=%s
-            """, (staff['id'], month)).fetchone()['n']
+                  AND punched_at >= %s AND punched_at < %s
+            """, (staff['id'], *_month_ts_range(month))).fetchone()['n']
             approved_ot = conn.execute("""
                 SELECT COUNT(*) AS n, COALESCE(SUM(ot_hours),0) AS hrs
                 FROM overtime_requests WHERE staff_id=%s
                   AND status='approved'
-                  AND to_char(request_date,'YYYY-MM')=%s
-            """, (staff['id'], month)).fetchone()
+                  AND request_date >= %s AND request_date < %s
+            """, (staff['id'], *_month_date_range(month))).fetchone()
             result.append({
                 'staff_id':       data['staff_id'],
                 'staff_name':     staff['name'],
@@ -8073,8 +8112,8 @@ def _compute_statements(year, month):
                    fc.statement_section AS section
             FROM finance_records fr
             LEFT JOIN finance_categories fc ON fc.id = fr.category_id
-            WHERE to_char(fr.record_date,'YYYY-MM') = %s
-        """, (period,)).fetchall()
+            WHERE fr.record_date >= %s AND fr.record_date < %s
+        """, _month_date_range(period)).fetchall()
 
         # Cumulative net before this month (for balance sheet period-start)
         prev = conn.execute("""
@@ -10150,14 +10189,15 @@ def _line_query_monthly_records(staff, user_id, text):
         month = _dtm.now(TW).strftime('%Y-%m')
 
     try:
+        _lb_ts_s, _lb_ts_e = _month_ts_range(month)
         with get_db() as conn:
             rows = conn.execute("""
                 SELECT punch_type, punched_at, is_manual
                 FROM punch_records
                 WHERE staff_id=%s
-                  AND to_char(punched_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM') = %s
+                  AND punched_at >= %s AND punched_at < %s
                 ORDER BY punched_at ASC
-            """, (staff['id'], month)).fetchall()
+            """, (staff['id'], _lb_ts_s, _lb_ts_e)).fetchall()
     except Exception as e:
         _send_line_punch(user_id, f'查詢失敗：{e}')
         return
