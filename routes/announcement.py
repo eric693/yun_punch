@@ -38,10 +38,14 @@ def _broadcast_announcement_line(title, content):
 def ann_row(row):
     if not row: return None
     d = dict(row)
-    if d.get('published_at'): d['published_at'] = d['published_at'].isoformat()
+    # Expose 'pinned' also as 'is_pinned' for API compatibility
+    if 'pinned' in d:
+        d['is_pinned'] = d['pinned']
     if d.get('expires_at'):   d['expires_at']   = d['expires_at'].isoformat()
     if d.get('created_at'):   d['created_at']   = d['created_at'].isoformat()
     if d.get('updated_at'):   d['updated_at']   = d['updated_at'].isoformat()
+    # published_at is an alias for created_at
+    d['published_at'] = d.get('created_at')
     return d
 
 # ── Admin: CRUD ───────────────────────────────────────────────────
@@ -52,7 +56,7 @@ def api_ann_list_admin():
     with get_db() as conn:
         rows = conn.execute("""
             SELECT * FROM announcements
-            ORDER BY is_pinned DESC, published_at DESC
+            ORDER BY pinned DESC, created_at DESC
             LIMIT 200
         """).fetchall()
     return jsonify([ann_row(r) for r in rows])
@@ -69,12 +73,13 @@ def api_ann_create():
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO announcements
-              (title, content, category, priority, is_pinned,
+              (title, content, category, priority, pinned,
                visible_to, expires_at, author, active)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (b['title'].strip(), b['content'].strip(),
               b.get('category','general'), b.get('priority','normal'),
-              bool(b.get('is_pinned', False)), b.get('visible_to','all'),
+              bool(b.get('is_pinned', b.get('pinned', False))),
+              b.get('visible_to','all'),
               expires, b.get('author','管理員').strip(),
               bool(b.get('active', True)))).fetchone()
     if row and row['active']:
@@ -92,12 +97,13 @@ def api_ann_update(aid):
         row = conn.execute("""
             UPDATE announcements SET
               title=%s, content=%s, category=%s, priority=%s,
-              is_pinned=%s, visible_to=%s, expires_at=%s,
+              pinned=%s, visible_to=%s, expires_at=%s,
               author=%s, active=%s, updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (b['title'].strip(), b.get('content','').strip(),
               b.get('category','general'), b.get('priority','normal'),
-              bool(b.get('is_pinned', False)), b.get('visible_to','all'),
+              bool(b.get('is_pinned', b.get('pinned', False))),
+              b.get('visible_to','all'),
               expires, b.get('author','管理員').strip(),
               bool(b.get('active', True)), aid)).fetchone()
     return jsonify(ann_row(row)) if row else ('', 404)
@@ -114,7 +120,7 @@ def api_ann_delete(aid):
 def api_ann_toggle_pin(aid):
     with get_db() as conn:
         row = conn.execute(
-            "UPDATE announcements SET is_pinned=NOT is_pinned, updated_at=NOW() WHERE id=%s RETURNING *",
+            "UPDATE announcements SET pinned=NOT pinned, updated_at=NOW() WHERE id=%s RETURNING *",
             (aid,)
         ).fetchone()
     return jsonify(ann_row(row)) if row else ('', 404)
@@ -129,7 +135,7 @@ def api_ann_public():
             SELECT * FROM announcements
             WHERE active = TRUE
               AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY is_pinned DESC, published_at DESC
+            ORDER BY pinned DESC, created_at DESC
             LIMIT 50
         """).fetchall()
     return jsonify([ann_row(r) for r in rows])

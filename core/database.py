@@ -603,6 +603,23 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_fr_date         ON finance_records(record_date)",
         "CREATE INDEX IF NOT EXISTS idx_schedr_month    ON schedule_requests(month)",
         "CREATE INDEX IF NOT EXISTS idx_lb_staff_year   ON leave_balances(staff_id, year)",
+        # ── 補欄位 migrations ─────────────────────────────────────────────────────
+        "ALTER TABLE announcements   ADD COLUMN IF NOT EXISTS category   TEXT DEFAULT 'general'",
+        "ALTER TABLE announcements   ADD COLUMN IF NOT EXISTS priority   TEXT DEFAULT 'normal'",
+        "ALTER TABLE announcements   ADD COLUMN IF NOT EXISTS visible_to TEXT DEFAULT 'all'",
+        "ALTER TABLE announcements   ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+        "ALTER TABLE announcements   ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0",
+        "ALTER TABLE holidays        ADD COLUMN IF NOT EXISTS holiday_type TEXT DEFAULT 'national'",
+        "ALTER TABLE holidays        ADD COLUMN IF NOT EXISTS note         TEXT DEFAULT ''",
+        "ALTER TABLE leave_requests  ADD COLUMN IF NOT EXISTS substitute_name TEXT DEFAULT ''",
+        "ALTER TABLE leave_requests  ADD COLUMN IF NOT EXISTS updated_at  TIMESTAMPTZ DEFAULT NOW()",
+        "ALTER TABLE leave_balances  ADD COLUMN IF NOT EXISTS note        TEXT DEFAULT ''",
+        "ALTER TABLE salary_items    ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
+        "ALTER TABLE salary_items    ADD COLUMN IF NOT EXISTS color       TEXT DEFAULT '#4a7bda'",
+        "ALTER TABLE salary_records  ADD COLUMN IF NOT EXISTS note        TEXT DEFAULT ''",
+        "ALTER TABLE salary_records  ADD COLUMN IF NOT EXISTS confirmed_by TEXT DEFAULT ''",
+        "ALTER TABLE punch_staff     ADD COLUMN IF NOT EXISTS salary_item_ids       JSONB",
+        "ALTER TABLE punch_staff     ADD COLUMN IF NOT EXISTS salary_item_overrides JSONB",
     ]
     for sql in migrations:
         try:

@@ -236,10 +236,10 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             # 2. 備援：日曆扣除週日 + 國定假日
             try:
                 holiday_rows = conn.execute("""
-                    SELECT date FROM public_holidays
-                    WHERE date >= %s AND date < %s
+                    SELECT holiday_date FROM holidays
+                    WHERE holiday_date >= %s AND holiday_date < %s
                 """, (_d_start, _d_end)).fetchall()
-                holiday_dates = {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in holiday_rows}
+                holiday_dates = {r['holiday_date'].isoformat() if hasattr(r['holiday_date'], 'isoformat') else str(r['holiday_date']) for r in holiday_rows}
             except Exception:
                 holiday_dates = set()
             days_in_month = _cal2.monthrange(y, m)[1]
