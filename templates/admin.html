@@ -1758,30 +1758,30 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="card" style="max-width:640px">
         <div class="card-header"><span class="card-title">新增考核記錄</span></div>
         <div style="padding:20px 24px">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-            <div>
-              <label class="filter-label" style="display:block;margin-bottom:6px">員工</label>
-              <select id="pf-staff" class="form-input" style="width:100%">
+          <div class="form-grid" style="margin-bottom:16px">
+            <div class="form-group">
+              <label class="form-label">員工</label>
+              <select id="pf-staff" class="form-input">
                 <option value="">選擇員工</option>
               </select>
             </div>
-            <div>
-              <label class="filter-label" style="display:block;margin-bottom:6px">考核範本</label>
-              <select id="pf-template" class="form-input" style="width:100%" onchange="loadPerfTemplateItems()">
+            <div class="form-group">
+              <label class="form-label">考核範本</label>
+              <select id="pf-template" class="form-input" onchange="loadPerfTemplateItems()">
                 <option value="">選擇範本</option>
               </select>
             </div>
-            <div>
-              <label class="filter-label" style="display:block;margin-bottom:6px">考核期間</label>
-              <input type="month" id="pf-period" class="form-input" style="width:100%">
+            <div class="form-group">
+              <label class="form-label">考核期間</label>
+              <input type="month" id="pf-period" class="form-input">
             </div>
-            <div>
-              <label class="filter-label" style="display:block;margin-bottom:6px">考核人</label>
-              <input type="text" id="pf-reviewer" class="form-input" style="width:100%" placeholder="考核人姓名">
+            <div class="form-group">
+              <label class="form-label">考核人</label>
+              <input type="text" id="pf-reviewer" class="form-input" placeholder="考核人姓名">
             </div>
           </div>
           <div id="pf-items-section" style="margin-bottom:16px;display:none">
-            <div class="filter-label" style="margin-bottom:8px">評分項目</div>
+            <div class="form-label" style="margin-bottom:8px">評分項目</div>
             <div id="pf-items-list"></div>
             <div style="display:flex;justify-content:flex-end;margin-top:8px;font-size:13px;color:var(--muted)">
               總分：<span id="pf-score-display" style="font-weight:700;color:var(--navy);margin-left:4px">0</span> / <span id="pf-max-display">0</span>
@@ -1789,7 +1789,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
             </div>
           </div>
           <div style="margin-bottom:16px">
-            <label class="filter-label" style="display:block;margin-bottom:6px">備註</label>
+            <label class="form-label">備註</label>
             <textarea id="pf-comments" class="form-input" rows="3" placeholder="考核備註（可選）" style="width:100%;resize:vertical"></textarea>
           </div>
           <button class="btn btn-primary" onclick="submitPerfReview()">送出考核</button>
@@ -1963,10 +1963,25 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="modal-header"><span class="modal-title" id="store-modal-title">新增門市</span><button class="modal-close" onclick="document.getElementById('store-modal').style.display='none'">&times;</button></div>
     <div class="modal-body">
       <input type="hidden" id="store-modal-id">
-      <div style="margin-bottom:12px"><label class="form-label">門市名稱 *</label><input class="form-input" id="store-modal-name" placeholder="例：信義店" style="width:100%"></div>
-      <div style="margin-bottom:12px"><label class="form-label">代碼</label><input class="form-input" id="store-modal-code" placeholder="例：xinyi" style="width:100%"></div>
-      <div style="margin-bottom:12px"><label class="form-label">地址</label><input class="form-input" id="store-modal-addr" placeholder="門市地址" style="width:100%"></div>
-      <div style="margin-bottom:12px"><label class="form-label"><input type="checkbox" id="store-modal-active" checked style="margin-right:6px">營業中</label></div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">門市名稱 *</label>
+          <input class="form-input" id="store-modal-name" placeholder="例：信義店">
+        </div>
+        <div class="form-group">
+          <label class="form-label">代碼</label>
+          <input class="form-input" id="store-modal-code" placeholder="例：xinyi">
+        </div>
+        <div class="form-group full-width">
+          <label class="form-label">地址</label>
+          <input class="form-input" id="store-modal-addr" placeholder="門市地址">
+        </div>
+        <div class="form-group full-width">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="store-modal-active" checked> 營業中
+          </label>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="document.getElementById('store-modal').style.display='none'">取消</button>
@@ -2024,10 +2039,29 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="modal-header"><span class="modal-title">編輯打卡記錄</span><button class="modal-close" onclick="closePunchRecModal()">&times;</button></div>
     <div class="modal-body">
       <input type="hidden" id="prm-id">
-      <div style="margin-bottom:12px"><label class="form-label">打卡類型</label><select class="form-input" id="prm-type" style="width:100%"><option value="in">上班打卡</option><option value="out">下班打卡</option><option value="break_out">休息開始</option><option value="break_in">休息結束</option></select></div>
-      <div style="margin-bottom:12px"><label class="form-label">打卡時間</label><input class="form-input" type="datetime-local" id="prm-time" style="width:100%"></div>
-      <div style="margin-bottom:12px"><label class="form-label">操作人員</label><input class="form-input" id="prm-by" placeholder="管理員姓名" style="width:100%"></div>
-      <div><label class="form-label">備註</label><input class="form-input" id="prm-note" style="width:100%"></div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">打卡類型</label>
+          <select class="form-input" id="prm-type">
+            <option value="in">上班打卡</option>
+            <option value="out">下班打卡</option>
+            <option value="break_out">休息開始</option>
+            <option value="break_in">休息結束</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">打卡時間</label>
+          <input class="form-input" type="datetime-local" id="prm-time">
+        </div>
+        <div class="form-group">
+          <label class="form-label">操作人員</label>
+          <input class="form-input" id="prm-by" placeholder="管理員姓名">
+        </div>
+        <div class="form-group">
+          <label class="form-label">備註</label>
+          <input class="form-input" id="prm-note">
+        </div>
+      </div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closePunchRecModal()">取消</button><button class="btn btn-primary" onclick="savePunchRec()">儲存</button></div>
   </div>
@@ -2039,14 +2073,35 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="modal-header"><span class="modal-title" id="glm-title">新增打卡地點</span><button class="modal-close" onclick="closeLocModal()">&times;</button></div>
     <div class="modal-body">
       <input type="hidden" id="glm-id">
-      <div style="margin-bottom:14px"><label class="form-label">地點名稱 *</label><input class="form-input" id="glm-name" placeholder="例：公司門口" style="width:100%"></div>
-      <div class="form-row">
-        <div><label class="form-label">緯度</label><input class="form-input" id="glm-lat" placeholder="例：25.033964" type="number" step="0.000001"></div>
-        <div><label class="form-label">經度</label><input class="form-input" id="glm-lng" placeholder="例：121.564468" type="number" step="0.000001"></div>
+      <div class="form-grid">
+        <div class="form-group full-width">
+          <label class="form-label">地點名稱 *</label>
+          <input class="form-input" id="glm-name" placeholder="例：公司門口">
+        </div>
+        <div class="form-group">
+          <label class="form-label">緯度</label>
+          <input class="form-input" id="glm-lat" placeholder="例：25.033964" type="number" step="0.000001">
+        </div>
+        <div class="form-group">
+          <label class="form-label">經度</label>
+          <input class="form-input" id="glm-lng" placeholder="例：121.564468" type="number" step="0.000001">
+        </div>
+        <div class="form-group">
+          <label class="form-label">允許範圍（公尺）</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input class="form-input" id="glm-radius" type="number" min="10" max="5000" value="100" style="width:120px">
+            <span style="font-size:12px;color:var(--muted)">超出此距離即視為不在範圍內</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">狀態</label>
+          <select class="form-input" id="glm-active" style="width:auto"><option value="1">啟用</option><option value="0">停用</option></select>
+        </div>
+        <div class="form-group full-width">
+          <button class="btn btn-outline btn-sm" onclick="getLocGPS()">取得目前位置</button>
+          <span id="glm-gps-msg" style="font-size:12px;color:var(--muted);margin-left:10px"></span>
+        </div>
       </div>
-      <div style="margin-bottom:14px"><label class="form-label">允許範圍（公尺）</label><input class="form-input" id="glm-radius" type="number" min="10" max="5000" value="100" style="width:140px"><span style="font-size:12px;color:var(--muted);margin-left:10px">超出此距離即視為不在範圍內</span></div>
-      <div style="margin-bottom:6px"><label class="form-label">狀態</label><select class="form-input" id="glm-active" style="width:auto"><option value="1">啟用</option><option value="0">停用</option></select></div>
-      <div style="margin-top:14px"><button class="btn btn-outline btn-sm" onclick="getLocGPS()">取得目前位置</button><span id="glm-gps-msg" style="font-size:12px;color:var(--muted);margin-left:10px"></span></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeLocModal()">取消</button><button class="btn btn-primary" onclick="saveLocation()">儲存</button></div>
   </div>
@@ -2206,17 +2261,28 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
     <div class="modal-body">
       <input type="hidden" id="hm-id">
-      <div style="margin-bottom:12px"><label class="form-label">日期 *</label><input class="form-input" type="date" id="hm-date" style="width:100%"></div>
-      <div style="margin-bottom:12px"><label class="form-label">名稱 *</label><input class="form-input" id="hm-name" placeholder="例：國慶日" style="width:100%"></div>
-      <div style="margin-bottom:12px">
-        <label class="form-label">類型</label>
-        <select class="form-input" id="hm-type" style="width:100%">
-          <option value="national">國定假日（加班×2）</option>
-          <option value="special">例假日（加班×2）</option>
-          <option value="makeup">補班日</option>
-        </select>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">日期 *</label>
+          <input class="form-input" type="date" id="hm-date">
+        </div>
+        <div class="form-group">
+          <label class="form-label">名稱 *</label>
+          <input class="form-input" id="hm-name" placeholder="例：國慶日">
+        </div>
+        <div class="form-group full-width">
+          <label class="form-label">類型</label>
+          <select class="form-input" id="hm-type">
+            <option value="national">國定假日（加班×2）</option>
+            <option value="special">例假日（加班×2）</option>
+            <option value="makeup">補班日</option>
+          </select>
+        </div>
+        <div class="form-group full-width">
+          <label class="form-label">備註</label>
+          <input class="form-input" id="hm-note">
+        </div>
       </div>
-      <div><label class="form-label">備註</label><input class="form-input" id="hm-note" style="width:100%"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeHolidayModal()">取消</button>
@@ -2234,14 +2300,14 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
     <div class="modal-body">
       <input type="hidden" id="ann-id">
-      <div style="margin-bottom:14px">
-        <label class="form-label">標題 *</label>
-        <input class="form-input" id="ann-title" placeholder="公告標題" style="width:100%">
-      </div>
-      <div class="form-row" style="margin-bottom:14px">
-        <div>
+      <div class="form-grid">
+        <div class="form-group full-width">
+          <label class="form-label">標題 *</label>
+          <input class="form-input" id="ann-title" placeholder="公告標題">
+        </div>
+        <div class="form-group">
           <label class="form-label">類別</label>
-          <select class="form-input" id="ann-cat" style="width:100%">
+          <select class="form-input" id="ann-cat">
             <option value="general">一般公告</option>
             <option value="hr">人事公告</option>
             <option value="event">活動通知</option>
@@ -2249,38 +2315,38 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
             <option value="policy">制度政策</option>
           </select>
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">優先度</label>
-          <select class="form-input" id="ann-priority" style="width:100%">
+          <select class="form-input" id="ann-priority">
             <option value="normal">一般</option>
             <option value="important">重要</option>
             <option value="urgent">緊急</option>
           </select>
         </div>
-      </div>
-      <div style="margin-bottom:14px">
-        <label class="form-label">內容 *</label>
-        <textarea class="form-input" id="ann-content" rows="6"
-          style="width:100%;resize:vertical;min-height:120px;font-family:'Noto Sans TC',sans-serif;font-size:14px;line-height:1.7"
-          placeholder="公告內容…"></textarea>
-      </div>
-      <div class="form-row" style="margin-bottom:14px">
-        <div>
+        <div class="form-group">
           <label class="form-label">發布人</label>
-          <input class="form-input" id="ann-author" placeholder="管理員" style="width:100%">
+          <input class="form-input" id="ann-author" placeholder="管理員">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">到期日（留空=永不過期）</label>
-          <input class="form-input" type="datetime-local" id="ann-expires" style="width:100%">
+          <input class="form-input" type="datetime-local" id="ann-expires">
         </div>
-      </div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-          <input type="checkbox" id="ann-pinned"> 置頂公告
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-          <input type="checkbox" id="ann-active" checked> 立即上架
-        </label>
+        <div class="form-group full-width">
+          <label class="form-label">內容 *</label>
+          <textarea class="form-input" id="ann-content" rows="6"
+            style="resize:vertical;min-height:120px;font-family:'Noto Sans TC',sans-serif;font-size:14px;line-height:1.7"
+            placeholder="公告內容…"></textarea>
+        </div>
+        <div class="form-group full-width">
+          <div style="display:flex;gap:20px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="ann-pinned"> 置頂公告
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="ann-active" checked> 立即上架
+            </label>
+          </div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -2569,17 +2635,21 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <input class="form-input" id="oem-vendor">
         </div>
       </div>
-      <div>
-        <label class="form-label">標題 *</label>
-        <input class="form-input" id="oem-title">
+      <div class="form-row">
+        <div>
+          <label class="form-label">標題 *</label>
+          <input class="form-input" id="oem-title">
+        </div>
+        <div>
+          <label class="form-label">發票 / 單據號碼</label>
+          <input class="form-input" id="oem-invoice_no">
+        </div>
       </div>
-      <div style="margin-top:10px">
-        <label class="form-label">發票 / 單據號碼</label>
-        <input class="form-input" id="oem-invoice_no">
-      </div>
-      <div style="margin-top:10px">
-        <label class="form-label">備註</label>
-        <input class="form-input" id="oem-note">
+      <div class="form-row">
+        <div style="grid-column:1/-1">
+          <label class="form-label">備註</label>
+          <input class="form-input" id="oem-note">
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -2622,46 +2692,46 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
     <div class="modal-body">
       <input type="hidden" id="apm-id">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
+      <div class="form-grid">
+        <div class="form-group">
           <label class="form-label">類型</label>
           <select class="form-input" id="apm-type">
             <option value="payable">應付帳款</option>
             <option value="receivable">應收帳款</option>
           </select>
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">狀態</label>
           <select class="form-input" id="apm-status">
             <option value="open">未結清</option>
             <option value="paid">已結清</option>
           </select>
         </div>
-        <div style="grid-column:1/-1">
+        <div class="form-group full-width">
           <label class="form-label">標題 *</label>
           <input class="form-input" id="apm-title-input" placeholder="例：3月份水電費">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">往來對象</label>
           <input class="form-input" id="apm-party" placeholder="廠商 / 客戶名稱">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">發票號碼</label>
           <input class="form-input" id="apm-invoice">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">金額 *</label>
           <input class="form-input" id="apm-amount" type="number" min="0" placeholder="0">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">到期日</label>
           <input class="form-input" id="apm-due" type="date">
         </div>
-        <div id="apm-paid-date-wrap">
+        <div class="form-group" id="apm-paid-date-wrap">
           <label class="form-label">結清日期</label>
           <input class="form-input" id="apm-paid" type="date">
         </div>
-        <div style="grid-column:1/-1">
+        <div class="form-group full-width">
           <label class="form-label">備註</label>
           <input class="form-input" id="apm-note" placeholder="備註">
         </div>
@@ -2700,35 +2770,35 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
     <div class="modal-body">
       <input type="hidden" id="rm-id">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div style="grid-column:1/-1">
+      <div class="form-grid">
+        <div class="form-group full-width">
           <label class="form-label">標題 *</label>
           <input class="form-input" id="rm-title-input" placeholder="例：月租金">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">類型</label>
           <select class="form-input" id="rm-type" onchange="renderRecurringCatOptions()">
             <option value="expense">支出</option>
             <option value="income">收入</option>
           </select>
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">類別</label>
           <select class="form-input" id="rm-cat"><option value="">未分類</option></select>
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">金額 *</label>
           <input class="form-input" id="rm-amount" type="number" min="0" placeholder="0">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">稅額</label>
           <input class="form-input" id="rm-tax" type="number" min="0" placeholder="0">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">廠商</label>
           <input class="form-input" id="rm-vendor" placeholder="廠商名稱">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">頻率</label>
           <select class="form-input" id="rm-frequency">
             <option value="monthly">每月</option>
@@ -2736,19 +2806,19 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
             <option value="yearly">每年</option>
           </select>
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">每次產生日（幾號）</label>
           <input class="form-input" id="rm-day" type="number" min="1" max="28" value="1">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">開始日期 *</label>
           <input class="form-input" id="rm-start" type="date">
         </div>
-        <div>
+        <div class="form-group">
           <label class="form-label">結束日期（選填）</label>
           <input class="form-input" id="rm-end" type="date">
         </div>
-        <div style="grid-column:1/-1">
+        <div class="form-group full-width">
           <label class="form-label">備註</label>
           <input class="form-input" id="rm-note" placeholder="備註">
         </div>
