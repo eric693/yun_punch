@@ -3152,7 +3152,7 @@ def api_ot_review(rid):
         if action == 'approve':
             staff = conn.execute("""
                 SELECT base_salary, hourly_rate, daily_hours,
-                       ot_rate1, ot_rate2, salary_type
+                       ot_rate1, ot_rate2, ot_rate3, salary_type
                 FROM punch_staff WHERE id=%s
             """, (req['staff_id'],)).fetchone()
             if staff:
@@ -4888,7 +4888,7 @@ def api_salary_staff_list():
         rows = conn.execute("""
             SELECT id, name, username, role, active, employee_code, department,
                    position_title, hire_date, birth_date, base_salary, insured_salary,
-                   daily_hours, ot_rate1, ot_rate2, salary_type, hourly_rate,
+                   daily_hours, ot_rate1, ot_rate2, ot_rate3, salary_type, hourly_rate,
                    vacation_quota, salary_notes, salary_item_ids, salary_item_overrides,
                    national_id, gender, insurance_type, address
             FROM punch_staff ORDER BY name
@@ -4896,7 +4896,7 @@ def api_salary_staff_list():
     result = []
     for r in rows:
         d = dict(r)
-        for f in ['base_salary','insured_salary','daily_hours','ot_rate1','ot_rate2','hourly_rate']:
+        for f in ['base_salary','insured_salary','daily_hours','ot_rate1','ot_rate2','ot_rate3','hourly_rate']:
             if d.get(f) is not None: d[f] = float(d[f])
         if d.get('hire_date'):  d['hire_date']  = d['hire_date'].isoformat()
         if d.get('birth_date'): d['birth_date'] = d['birth_date'].isoformat()
@@ -4921,7 +4921,7 @@ def api_salary_staff_update(sid):
               employee_code=%s, department=%s, position_title=%s,
               hire_date=%s, birth_date=%s,
               base_salary=%s, insured_salary=%s, daily_hours=%s,
-              ot_rate1=%s, ot_rate2=%s, salary_type=%s,
+              ot_rate1=%s, ot_rate2=%s, ot_rate3=%s, salary_type=%s,
               hourly_rate=%s, vacation_quota=%s, salary_notes=%s,
               salary_item_ids=%s, salary_item_overrides=%s,
               national_id=%s, gender=%s, insurance_type=%s, address=%s
@@ -4929,7 +4929,7 @@ def api_salary_staff_update(sid):
         """, (_s('employee_code'), _s('department'), _s('position_title'),
               _s('hire_date'), _s('birth_date'),
               _f('base_salary'), _f('insured_salary'), _f('daily_hours') or 8,
-              _f('ot_rate1') or 1.33, _f('ot_rate2') or 1.67,
+              _f('ot_rate1') or 1.33, _f('ot_rate2') or 1.67, _f('ot_rate3') or 2.0,
               b.get('salary_type','monthly'),
               _f('hourly_rate'), b.get('vacation_quota') or None,
               b.get('salary_notes',''), salary_item_ids_json, overrides_json,
@@ -6954,7 +6954,7 @@ def api_ot_batch():
                 if action == 'approve':
                     staff_s = conn.execute("""
                         SELECT base_salary, hourly_rate, daily_hours,
-                               ot_rate1, ot_rate2, salary_type
+                               ot_rate1, ot_rate2, ot_rate3, salary_type
                         FROM punch_staff WHERE id=%s
                     """, (row['staff_id'],)).fetchone()
                     pay = 0.0
@@ -11068,7 +11068,7 @@ def mobile_admin_overtime_action(oid):
         ot_pay_val = 0.0
         if action == 'approve' and req['status'] != 'approved':
             staff_s = conn.execute("""
-                SELECT base_salary, hourly_rate, daily_hours, ot_rate1, ot_rate2, salary_type
+                SELECT base_salary, hourly_rate, daily_hours, ot_rate1, ot_rate2, ot_rate3, salary_type
                 FROM punch_staff WHERE id=%s
             """, (req['staff_id'],)).fetchone()
             if staff_s:
