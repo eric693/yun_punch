@@ -691,8 +691,11 @@ def _line_query_performance(staff, user_id):
     if not row:
         _send_line_punch(user_id, f'{staff["name"]}\n尚無績效考核記錄。')
         return
-    from routes.performance import _grade_labels
-    grade_label = _grade_labels()
+    try:
+        from routes.performance import _grade_labels
+        grade_label = _grade_labels()
+    except (ImportError, Exception):
+        grade_label = {}
     pct = float(row['total_score']) / float(row['max_score']) * 100 if row['max_score'] else 0
     adj = f"\n薪資調整：NT$ {float(row['salary_delta']):+,.0f}" if row['salary_adjusted'] else ''
     reviewed = str(row['reviewed_at'])[:10] if row['reviewed_at'] else ''

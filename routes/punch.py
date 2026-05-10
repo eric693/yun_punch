@@ -413,7 +413,9 @@ def api_punch_records():
     conds, params = ["TRUE"], []
     if staff_id: conds.append("pr.staff_id=%s"); params.append(int(staff_id))
     if month:
-        conds.append("TO_CHAR(pr.punched_at,'YYYY-MM')=%s"); params.append(month)
+        _ts_s, _ts_e = _month_ts_range(month)
+        conds.append("pr.punched_at >= %s AND pr.punched_at < %s")
+        params.extend([_ts_s, _ts_e])
     elif date_from:
         conds.append("(pr.punched_at AT TIME ZONE 'Asia/Taipei')::date>=%s"); params.append(date_from)
         if date_to:
@@ -498,6 +500,7 @@ def api_punch_record_delete(rid):
 def api_punch_summary():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
+        _sum_ts_s, _sum_ts_e = _month_ts_range(month)
         rows = [dict(r) for r in conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
                    (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
@@ -506,10 +509,10 @@ def api_punch_summary():
                    COUNT(*) as punch_count,
                    BOOL_OR(pr.is_manual) as has_manual
             FROM punch_records pr JOIN punch_staff ps ON ps.id=pr.staff_id
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            WHERE pr.punched_at >= %s AND pr.punched_at < %s
             GROUP BY ps.id, ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date ASC, ps.name
-        """, (month,)).fetchall()]
+        """, (_sum_ts_s, _sum_ts_e)).fetchall()]
 
     # 跨日班次合併：上班在 day N、下班在 day N+1
     from datetime import date as _dcm, timedelta as _tdcm
@@ -558,6 +561,7 @@ def api_attendance_monthly_stats():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
         # 每人每日打卡彙整
+        _stat_ts_s, _stat_ts_e = _month_ts_range(month)
         rows = [dict(r) for r in conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
                    ps.department, ps.role,
@@ -568,11 +572,11 @@ def api_attendance_monthly_stats():
                    BOOL_OR(pr.punch_type='out') as has_out
             FROM punch_records pr
             JOIN punch_staff ps ON ps.id = pr.staff_id AND ps.active = TRUE
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM') = %s
+            WHERE pr.punched_at >= %s AND pr.punched_at < %s
             GROUP BY ps.id, ps.name, ps.department, ps.role,
                      (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY ps.name, work_date
-        """, (month,)).fetchall()]
+        """, (_stat_ts_s, _stat_ts_e)).fetchall()]
 
         # 跨日班次合併
         from datetime import date as _dcs, timedelta as _tdcs
@@ -591,12 +595,14 @@ def api_attendance_monthly_stats():
         rows = [r for r in rows if (r['staff_id'], str(r['work_date'])) not in _stat_skip]
 
         # 班別指派（用於遲到判斷）
+        from core.helpers import _month_date_range as _mdr
+        _sa_d_s, _sa_d_e = _mdr(month)
         shift_rows = conn.execute("""
             SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
-            WHERE TO_CHAR(sa.shift_date,'YYYY-MM') = %s
-        """, (month,)).fetchall()
+            WHERE sa.shift_date >= %s AND sa.shift_date < %s
+        """, (_sa_d_s, _sa_d_e)).fetchall()
         shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
 
     from collections import defaultdict
@@ -724,6 +730,38 @@ def api_punch_reqs_list():
             ORDER BY pr.created_at DESC LIMIT 200
         """, params).fetchall()
     return jsonify([punch_req_row(r) for r in rows])
+
+
+@bp.route('/api/punch/requests/<int:rid>', methods=['PUT'])
+@login_required
+def api_punch_req_review(rid):
+    """審核補打卡申請：approve 自動建立真實打卡記錄；reject 僅更新狀態。"""
+    b           = request.get_json(force=True)
+    action      = b.get('action')
+    reviewed_by = b.get('reviewed_by', '').strip()
+    review_note = b.get('review_note', '').strip()
+    if action not in ('approve', 'reject'):
+        return jsonify({'error': 'invalid action'}), 400
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    with get_db() as conn:
+        req = conn.execute("SELECT * FROM punch_requests WHERE id=%s", (rid,)).fetchone()
+        if not req: return ('', 404)
+        row = conn.execute("""
+            UPDATE punch_requests
+            SET status=%s, reviewed_by=%s, review_note=%s, reviewed_at=NOW()
+            WHERE id=%s RETURNING *
+        """, (new_status, reviewed_by, review_note, rid)).fetchone()
+        if action == 'approve':
+            conn.execute("""
+                INSERT INTO punch_records
+                  (staff_id, punch_type, punched_at, note, is_manual, manual_by)
+                VALUES (%s,%s,%s,%s,TRUE,%s)
+            """, (req['staff_id'], req['punch_type'], req['requested_at'],
+                  f'補打（{review_note}）' if review_note else '補打（核准）',
+                  reviewed_by or '管理員'))
+            _trigger_salary_regen_for_leave(conn, req['staff_id'],
+                                            str(req['requested_at'])[:7])
+    return jsonify(punch_req_row(row)) if row else ('', 404)
 
 
 @bp.route('/api/punch/requests/<int:rid>', methods=['DELETE'])

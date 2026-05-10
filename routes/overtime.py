@@ -136,7 +136,7 @@ def api_ot_review(rid):
         if action == 'approve':
             staff = conn.execute("""
                 SELECT base_salary, hourly_rate, daily_hours,
-                       ot_rate1, ot_rate2, salary_type
+                       ot_rate1, ot_rate2, ot_rate3, salary_type
                 FROM punch_staff WHERE id=%s
             """, (req['staff_id'],)).fetchone()
             if staff:
@@ -290,7 +290,7 @@ def api_ot_batch():
                 if action == 'approve':
                     staff_s = conn.execute("""
                         SELECT base_salary, hourly_rate, daily_hours,
-                               ot_rate1, ot_rate2, salary_type
+                               ot_rate1, ot_rate2, ot_rate3, salary_type
                         FROM punch_staff WHERE id=%s
                     """, (row['staff_id'],)).fetchone()
                     pay = 0.0
