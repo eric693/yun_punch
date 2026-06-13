@@ -30,6 +30,28 @@ from linebot.models import (
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
+# ─── gzip 壓縮（縮小首屏與 JSON 傳輸量）────────────────────────────────────────
+try:
+    from flask_compress import Compress
+    app.config['COMPRESS_MIMETYPES'] = [
+        'text/html', 'text/css', 'text/javascript', 'application/javascript',
+        'application/json', 'image/svg+xml',
+    ]
+    app.config['COMPRESS_LEVEL'] = 6
+    app.config['COMPRESS_MIN_SIZE'] = 1024
+    Compress(app)
+    print("[OK] gzip compression enabled")
+except ImportError:
+    print("[WARN] flask_compress not installed - responses will not be gzipped")
+
+
+@app.after_request
+def _set_cache_headers(resp):
+    """靜態資源給長快取；其餘預設不快取，避免後台資料被瀏覽器留存。"""
+    if request.path.startswith('/static/'):
+        resp.headers.setdefault('Cache-Control', 'public, max-age=86400')
+    return resp
+
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
 LINE_CHANNEL_SECRET       = os.environ.get('LINE_CHANNEL_SECRET', '')
 ADMIN_PASSWORD            = os.environ.get('ADMIN_PASSWORD', 'admin123')
@@ -1273,7 +1295,8 @@ def api_punch_records():
     conds, params = ["TRUE"], []
     if staff_id: conds.append("pr.staff_id=%s"); params.append(int(staff_id))
     if month:
-        conds.append("TO_CHAR(pr.punched_at,'YYYY-MM')=%s"); params.append(month)
+        _ts_s, _ts_e = _month_ts_range(month)
+        conds.append("pr.punched_at >= %s AND pr.punched_at < %s"); params += [_ts_s, _ts_e]
     elif date_from:
         conds.append("(pr.punched_at AT TIME ZONE 'Asia/Taipei')::date>=%s"); params.append(date_from)
         if date_to:
@@ -1353,6 +1376,7 @@ def api_punch_record_delete(rid):
 @login_required
 def api_punch_summary():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
+    _ts_s, _ts_e = _month_ts_range(month)
     with get_db() as conn:
         rows = [dict(r) for r in conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
@@ -1362,10 +1386,10 @@ def api_punch_summary():
                    COUNT(*) as punch_count,
                    BOOL_OR(pr.is_manual) as has_manual
             FROM punch_records pr JOIN punch_staff ps ON ps.id=pr.staff_id
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            WHERE pr.punched_at >= %s AND pr.punched_at < %s
             GROUP BY ps.id, ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date ASC, ps.name
-        """, (month,)).fetchall()]
+        """, (_ts_s, _ts_e)).fetchall()]
 
     # 跨日班次合併:上班在 day N、下班在 day N+1
     from datetime import date as _dcm, timedelta as _tdcm
@@ -1411,6 +1435,8 @@ def api_attendance_monthly_stats():
     回傳:出勤天數、總工時、遲到次數、缺打卡次數、平均工時
     """
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
+    _ts_s, _ts_e = _month_ts_range(month)
+    _d_s, _d_e   = _month_date_range(month)
     with get_db() as conn:
         # 每人每日打卡彙整
         rows = [dict(r) for r in conn.execute("""
@@ -1423,11 +1449,11 @@ def api_attendance_monthly_stats():
                    BOOL_OR(pr.punch_type='out') as has_out
             FROM punch_records pr
             JOIN punch_staff ps ON ps.id = pr.staff_id AND ps.active = TRUE
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM') = %s
+            WHERE pr.punched_at >= %s AND pr.punched_at < %s
             GROUP BY ps.id, ps.name, ps.department, ps.role,
                      (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY ps.name, work_date
-        """, (month,)).fetchall()]
+        """, (_ts_s, _ts_e)).fetchall()]
 
         # 跨日班次合併:day N 有上班無下班 + day N+1 有下班無上班 -> 歸入 day N
         from datetime import date as _dcs, timedelta as _tdcs
@@ -1450,8 +1476,8 @@ def api_attendance_monthly_stats():
             SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
-            WHERE TO_CHAR(sa.shift_date,'YYYY-MM') = %s
-        """, (month,)).fetchall()
+            WHERE sa.shift_date >= %s AND sa.shift_date < %s
+        """, (_d_s, _d_e)).fetchall()
         shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
 
     from collections import defaultdict
@@ -1636,8 +1662,10 @@ def _send_line_with_quick_reply(user_id, text, items):
         print(f"[LINE PUNCH] push_message (qr) error: {e}")
 
 
-@app.route('/line-punch/webhook', methods=['POST'])
+@app.route('/line-punch/webhook', methods=['GET', 'POST'])
 def line_punch_webhook():
+    if request.method == 'GET':
+        return 'OK', 200
     cfg = get_line_punch_config()
     if not cfg or not cfg.get('enabled') or not cfg.get('channel_secret'):
         return 'disabled', 200
@@ -2792,6 +2820,7 @@ def api_shift_conflicts():
 
     conflicts = []
 
+    _d_s, _d_e = _month_date_range(month)
     with get_db() as conn:
         rows = conn.execute("""
             SELECT sa.staff_id, sa.shift_date,
@@ -2801,9 +2830,9 @@ def api_shift_conflicts():
             FROM shift_assignments sa
             JOIN punch_staff  ps ON ps.id = sa.staff_id
             JOIN shift_types  st ON st.id = sa.shift_type_id
-            WHERE TO_CHAR(sa.shift_date, 'YYYY-MM') = %s
+            WHERE sa.shift_date >= %s AND sa.shift_date < %s
             ORDER BY sa.staff_id, sa.shift_date
-        """, (month,)).fetchall()
+        """, (_d_s, _d_e)).fetchall()
 
     # ── 每班時數 & 跨日 ────────────────────────────────────────────
     for r in rows:
@@ -2906,6 +2935,7 @@ def api_shift_export():
     days_in_month = _cal2.monthrange(y, mo)[1]
     DAYS_CN = ['一','二','三','四','五','六','日']
 
+    _d_s, _d_e = _month_date_range(month)
     with get_db() as conn:
         staff_list = conn.execute(
             "SELECT id, name, employee_code, role FROM punch_staff WHERE active=TRUE ORDER BY name"
@@ -2915,10 +2945,10 @@ def api_shift_export():
                    st.name AS shift_name, st.start_time, st.end_time
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
-            WHERE TO_CHAR(sa.shift_date, 'YYYY-MM') = %s
-        """, (month,)).fetchall()
+            WHERE sa.shift_date >= %s AND sa.shift_date < %s
+        """, (_d_s, _d_e)).fetchall()
         holidays = {str(r['date']) for r in conn.execute(
-            "SELECT date FROM public_holidays WHERE TO_CHAR(date,'YYYY-MM')=%s", (month,)
+            "SELECT date FROM public_holidays WHERE date >= %s AND date < %s", (_d_s, _d_e)
         ).fetchall()}
 
     lookup = {}
@@ -5319,7 +5349,8 @@ def api_export_attendance():
         from datetime import date as _de
         month = _de.today().strftime('%Y-%m')
 
-    conds, params = ["TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s"], [month]
+    _ts_s, _ts_e = _month_ts_range(month)
+    conds, params = ["pr.punched_at >= %s AND pr.punched_at < %s"], [_ts_s, _ts_e]
     if staff_id:
         conds.append("pr.staff_id=%s"); params.append(int(staff_id))
 
@@ -5385,6 +5416,7 @@ def api_export_attendance_summary():
         from datetime import date as _df
         month = _df.today().strftime('%Y-%m')
 
+    _ts_s, _ts_e = _month_ts_range(month)
     with get_db() as conn:
         rows = conn.execute("""
             SELECT
@@ -5401,11 +5433,11 @@ def api_export_attendance_summary():
                 COUNT(*) as punch_count
             FROM punch_records pr
             JOIN punch_staff ps ON ps.id = pr.staff_id
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            WHERE pr.punched_at >= %s AND pr.punched_at < %s
             GROUP BY ps.employee_code, ps.name, ps.department, ps.role,
                      (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
-        """, (month,)).fetchall()
+        """, (_ts_s, _ts_e)).fetchall()
 
     output = io.StringIO()
     output.write('\ufeff')
@@ -5457,6 +5489,8 @@ def api_anomaly_report_excel():
         return jsonify({'error': '月份格式錯誤'}), 400
 
     TW_OFF = _tdx(hours=8)
+    _ts_s, _ts_e = _month_ts_range(month)
+    _d_s, _d_e   = _month_date_range(month)
 
     with get_db() as conn:
         punch_rows = conn.execute("""
@@ -5469,11 +5503,11 @@ def api_anomaly_report_excel():
                    BOOL_OR(pr.punch_type='out') as has_out
             FROM punch_records pr
             JOIN punch_staff ps ON ps.id=pr.staff_id AND ps.active=TRUE
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            WHERE pr.punched_at >= %s AND pr.punched_at < %s
             GROUP BY ps.id, ps.name, ps.department,
                      (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY work_date, ps.name
-        """, (month,)).fetchall()
+        """, (_ts_s, _ts_e)).fetchall()
 
         shift_rows = conn.execute("""
             SELECT sa.staff_id, sa.shift_date,
@@ -5481,8 +5515,8 @@ def api_anomaly_report_excel():
                    st.end_time::text   as end_time
             FROM shift_assignments sa
             JOIN shift_types st ON st.id=sa.shift_type_id
-            WHERE TO_CHAR(sa.shift_date,'YYYY-MM')=%s
-        """, (month,)).fetchall()
+            WHERE sa.shift_date >= %s AND sa.shift_date < %s
+        """, (_d_s, _d_e)).fetchall()
 
         y_int = int(month[:4]); mo_int = int(month[5:7])
         first_day = f"{y_int}-{mo_int:02d}-01"
@@ -6044,13 +6078,14 @@ def api_dashboard_attendance_heatmap():
             GROUP BY d
         """, (_db2_ts_s, _db2_ts_e)).fetchall()
 
+        _lv_d_s, _lv_d_e = _month_date_range(month)
         leave_rows = conn.execute("""
             SELECT lr.start_date, lr.end_date, COUNT(*) as cnt
             FROM leave_requests lr
             WHERE lr.status='approved'
-              AND TO_CHAR(lr.start_date,'YYYY-MM')=%s OR TO_CHAR(lr.end_date,'YYYY-MM')=%s
+              AND lr.start_date < %s AND lr.end_date >= %s
             GROUP BY lr.start_date, lr.end_date
-        """, (month, month)).fetchall()
+        """, (_lv_d_e, _lv_d_s)).fetchall()
 
     punch_map = {str(r['d']): int(r['cnt']) for r in punch_rows}
 
@@ -6673,7 +6708,7 @@ def api_auto_generate_schedule():
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8010))
     app.run(host='0.0.0.0', port=port, debug=False)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -8633,7 +8668,8 @@ def api_bank_statements():
     month = request.args.get('month', '')
     conds, params = ['TRUE'], []
     if month:
-        conds.append("TO_CHAR(bs.txn_date,'YYYY-MM')=%s"); params.append(month)
+        _d_s, _d_e = _month_date_range(month)
+        conds.append("bs.txn_date >= %s AND bs.txn_date < %s"); params += [_d_s, _d_e]
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT bs.*, fr.title as matched_title, fr.amount as matched_amount,
@@ -8681,12 +8717,13 @@ def api_bank_auto_match():
     b = request.get_json(force=True)
     month = b.get('month', '')
     matched = 0
+    _bm_d = _month_date_range(month) if month else None
     with get_db() as conn:
         stmts = conn.execute("""
             SELECT * FROM bank_statements
             WHERE reconciled=FALSE
-            """ + ("AND TO_CHAR(txn_date,'YYYY-MM')=%s" if month else ""),
-            ([month] if month else [])).fetchall()
+            """ + ("AND txn_date >= %s AND txn_date < %s" if month else ""),
+            (list(_bm_d) if month else [])).fetchall()
         for s in stmts:
             # Find finance record: same amount, date within ±3 days, same type direction
             ftype = 'income' if s['txn_type'] == 'credit' else 'expense'
@@ -8711,8 +8748,8 @@ def api_bank_auto_match():
 @require_module('finance')
 def api_bank_summary():
     month = request.args.get('month', '')
-    cond = "AND TO_CHAR(txn_date,'YYYY-MM')=%s" if month else ""
-    params = [month] if month else []
+    cond = "AND txn_date >= %s AND txn_date < %s" if month else ""
+    params = list(_month_date_range(month)) if month else []
     with get_db() as conn:
         r = conn.execute(f"""
             SELECT
@@ -8745,6 +8782,8 @@ def api_finance_tax(year, period):
     m_start = (period - 1) * 2 + 1
     m_end   = m_start + 1
     months  = [f"{year}-{str(m).zfill(2)}" for m in range(m_start, m_end + 1)]
+    _d_s = _month_date_range(f"{year}-{m_start:02d}")[0]
+    _d_e = _month_date_range(f"{year}-{m_end:02d}")[1]
 
     with get_db() as conn:
         rows = conn.execute("""
@@ -8753,9 +8792,9 @@ def api_finance_tax(year, period):
                    fc.name as category_name
             FROM finance_records fr
             LEFT JOIN finance_categories fc ON fc.id=fr.category_id
-            WHERE TO_CHAR(fr.record_date,'YYYY-MM') = ANY(%s)
+            WHERE fr.record_date >= %s AND fr.record_date < %s
             ORDER BY fr.record_date, fr.type
-        """, (months,)).fetchall()
+        """, (_d_s, _d_e)).fetchall()
 
     sales_rows    = [r for r in rows if r['type'] == 'income']
     purchase_rows = [r for r in rows if r['type'] == 'expense']
@@ -8986,12 +9025,13 @@ def api_budgets_vs_actual():
         budgets = conn.execute("""
             SELECT category_id, budget_amount FROM finance_budgets WHERE year=%s AND month=%s
         """, (int(year), int(month))).fetchall()
+        _d_s, _d_e = _month_date_range(period)
         actuals = conn.execute("""
             SELECT category_id, SUM(amount) as total
             FROM finance_records
-            WHERE TO_CHAR(record_date,'YYYY-MM')=%s
+            WHERE record_date >= %s AND record_date < %s
             GROUP BY category_id
-        """, (period,)).fetchall()
+        """, (_d_s, _d_e)).fetchall()
     budget_map = {r['category_id']: float(r['budget_amount']) for r in budgets}
     actual_map = {r['category_id']: float(r['total']) for r in actuals}
     result = []
@@ -9099,15 +9139,17 @@ def api_finance_tax_sync(year, period):
     m_end   = m_start + 1
     months  = [f"{year}-{str(m).zfill(2)}" for m in range(m_start, m_end + 1)]
     roc_year = year - 1911
+    _d_s = _month_date_range(f"{year}-{m_start:02d}")[0]
+    _d_e = _month_date_range(f"{year}-{m_end:02d}")[1]
 
     with get_db() as conn:
         rows = conn.execute("""
             SELECT type, SUM(tax_amount) as tax_total
             FROM finance_records
-            WHERE TO_CHAR(record_date,'YYYY-MM') = ANY(%s)
+            WHERE record_date >= %s AND record_date < %s
               AND tax_amount IS NOT NULL AND tax_amount <> 0
             GROUP BY type
-        """, (months,)).fetchall()
+        """, (_d_s, _d_e)).fetchall()
 
     sales_tax    = sum(float(r['tax_total']) for r in rows if r['type'] == 'income')
     purchase_tax = sum(float(r['tax_total']) for r in rows if r['type'] == 'expense')
@@ -11125,12 +11167,13 @@ def mobile_admin_anomalies():
         staff_all = conn.execute(
             "SELECT id, name, department FROM punch_staff WHERE active=TRUE ORDER BY name"
         ).fetchall()
+        _ts_s, _ts_e = _month_ts_range(f'{y}-{m:02d}')
         records = conn.execute(
             """SELECT staff_id,
                       (punched_at AT TIME ZONE 'Asia/Taipei')::date AS day
                FROM punch_records
-               WHERE TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM') = %s""",
-            (f'{y}-{m:02d}',)
+               WHERE punched_at >= %s AND punched_at < %s""",
+            (_ts_s, _ts_e)
         ).fetchall()
     from collections import defaultdict
     by_staff = defaultdict(set)
