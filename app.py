@@ -397,8 +397,11 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_ps_line_uid    ON punch_staff(line_user_id) WHERE line_user_id IS NOT NULL",
         # punch_requests
         "CREATE INDEX IF NOT EXISTS idx_pq_staff_status ON punch_requests(staff_id, status)",
-        # shift_assignments: 排班日期查詢
+        # shift_assignments: 月份整表查詢用 shift_date;薪資/請假的每員工查詢用複合索引
         "CREATE INDEX IF NOT EXISTS idx_sa_date        ON shift_assignments(shift_date)",
+        "CREATE INDEX IF NOT EXISTS idx_sa_staff_date  ON shift_assignments(staff_id, shift_date)",
+        # leave_requests: dashboard/異常偵測常以 status + 日期區間過濾(無 staff_id)
+        "CREATE INDEX IF NOT EXISTS idx_lr_status_date ON leave_requests(status, start_date)",
         # finance_records
         "CREATE INDEX IF NOT EXISTS idx_fr_date        ON finance_records(record_date)",
         # schedule_requests: 月份查詢
@@ -5873,17 +5876,20 @@ def api_dashboard():
             ORDER BY ps.name
         """, (today,)).fetchall()
 
+        # 今日請假者的假別名稱(一次查詢,避免每位員工各打一次 DB)
+        leave_name_rows = conn.execute("""
+            SELECT DISTINCT ON (lr.staff_id) lr.staff_id, lt.name as leave_name
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id = lr.leave_type_id
+            WHERE lr.status='approved'
+              AND lr.start_date <= %s AND lr.end_date >= %s
+            ORDER BY lr.staff_id, lr.start_date
+        """, (today, today)).fetchall()
+        leave_name_map = {r['staff_id']: r['leave_name'] for r in leave_name_rows}
+
         today_detail = []
         for r in today_detail_rows:
-            # Check if on leave
-            leave_row = conn.execute("""
-                SELECT lt.name as leave_name
-                FROM leave_requests lr
-                JOIN leave_types lt ON lt.id = lr.leave_type_id
-                WHERE lr.staff_id=%s AND lr.status='approved'
-                  AND lr.start_date <= %s AND lr.end_date >= %s
-                LIMIT 1
-            """, (r['id'], today, today)).fetchone()
+            leave_name = leave_name_map.get(r['id'])
 
             if r['clock_in']:
                 if r['clock_out']:
@@ -5892,9 +5898,9 @@ def api_dashboard():
                 else:
                     status = 'working'
                     status_label = '上班中'
-            elif leave_row:
+            elif leave_name:
                 status = 'leave'
-                status_label = leave_row['leave_name']
+                status_label = leave_name
             else:
                 status = 'absent'
                 status_label = '未出勤'
