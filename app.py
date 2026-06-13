@@ -4535,7 +4535,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 SELECT * FROM salary_items
                 WHERE active=TRUE AND id IN ({placeholders})
                   AND item_type='deduction'
-                  AND (formula LIKE '%insured_salary%' OR formula LIKE '%base_salary%')
+                  AND (formula LIKE '%%insured_salary%%' OR formula LIKE '%%base_salary%%')
                 ORDER BY sort_order, id
             """, staff_item_ids).fetchall()
         else:
@@ -5928,7 +5928,8 @@ def api_dashboard():
 
         # ── 本月出勤統計(每天出勤人數,用於折線圖)─────────────
         import calendar as _cal
-        days_in_month = _cal.monthrange(today.year, today.month)[1]
+        _m_year, _m_mon = int(month[:4]), int(month[5:7])
+        days_in_month = _cal.monthrange(_m_year, _m_mon)[1]
         _db_ts_s, _db_ts_e = _month_ts_range(month)
         daily_rows = conn.execute("""
             SELECT (punched_at AT TIME ZONE 'Asia/Taipei')::date as d,
@@ -5943,7 +5944,7 @@ def api_dashboard():
         daily_attendance = []
         for day in range(1, days_in_month + 1):
             ds = f"{month}-{day:02d}"
-            dt = _dd(today.year, today.month, day)
+            dt = _dd(_m_year, _m_mon, day)
             daily_attendance.append({
                 'date':    ds,
                 'day':     day,
@@ -7119,7 +7120,31 @@ def api_attendance_anomalies():
         for r in leave_today:
             on_leave_today_ids.add(r['staff_id'])
 
+        # 今日有排班的員工(用於判斷誰「應出勤」);以及今日是否為假日/週末
+        scheduled_today_rows = conn.execute(
+            "SELECT DISTINCT staff_id FROM shift_assignments WHERE shift_date=%s", (today,)
+        ).fetchall()
+        scheduled_today_ids = {r['staff_id'] for r in scheduled_today_rows}
+        today_is_holiday    = _is_holiday(conn, str(today))
+        today_is_weekend    = today.weekday() >= 5
+
     anomalies = []
+
+    # 跨日班別合併:N 日有上班無下班 + N+1 日有下班無上班 -> 不重複報缺卡
+    from datetime import date as _da_x, timedelta as _td_x
+    _row_map = {(r['staff_id'], str(r['work_date'])): r for r in rows}
+    _skip_missing_out = set()
+    _skip_missing_in  = set()
+    for r in rows:
+        _t = list(r['types']) if r['types'] else []
+        if 'in' in _t and 'out' not in _t:
+            _nd = (_da_x.fromisoformat(str(r['work_date'])) + _td_x(days=1)).isoformat()
+            _nr = _row_map.get((r['staff_id'], _nd))
+            if _nr:
+                _nt = list(_nr['types']) if _nr['types'] else []
+                if 'out' in _nt and 'in' not in _nt:
+                    _skip_missing_out.add((r['staff_id'], str(r['work_date'])))
+                    _skip_missing_in.add((r['staff_id'], _nd))
 
     # 1. 近7天:有上班但無下班卡
     for r in rows:
@@ -7128,7 +7153,8 @@ def api_attendance_anomalies():
         has_out = 'out' in types
         ds = str(r['work_date'])
 
-        if has_in and not has_out and ds != str(today):
+        if has_in and not has_out and ds != str(today) \
+                and (r['staff_id'], ds) not in _skip_missing_out:
             # 昨天或更早沒打下班卡(今天的可能還沒下班)
             anomalies.append({
                 'type':       'missing_out',
@@ -7142,7 +7168,7 @@ def api_attendance_anomalies():
                 'detail':     f"上班 {r['first_in']},無下班記錄",
             })
 
-        if not has_in and has_out:
+        if not has_in and has_out and (r['staff_id'], ds) not in _skip_missing_in:
             anomalies.append({
                 'type':       'missing_in',
                 'label':      '忘記上班打卡',
@@ -7178,8 +7204,9 @@ def api_attendance_anomalies():
                 except Exception:
                     pass
 
-        # 早退判斷(有班別指派)
-        if has_out and r['last_out'] and ds != str(today):
+        # 早退判斷(有班別指派);跨日合併進來的下班卡屬前一日班別,不在此判斷
+        if has_out and r['last_out'] and ds != str(today) \
+                and (r['staff_id'], ds) not in _skip_missing_in:
             shift = shift_map.get((r['staff_id'], ds))
             if shift and shift['end_time']:
                 try:
@@ -7201,9 +7228,16 @@ def api_attendance_anomalies():
                 except Exception:
                     pass
 
-    # 2. 今日未出勤(不含請假)
+    # 2. 今日未出勤(不含請假);只報「今日應出勤」者
+    #    有排班 -> 以排班為準;當日完全無人排班(或未使用排班) -> 以平日(非週末非假日)為準
     for s in all_staff:
-        if s['id'] not in today_punched_ids and s['id'] not in on_leave_today_ids:
+        if s['id'] in today_punched_ids or s['id'] in on_leave_today_ids:
+            continue
+        if scheduled_today_ids:
+            expected_today = s['id'] in scheduled_today_ids
+        else:
+            expected_today = (not today_is_weekend) and (not today_is_holiday)
+        if expected_today:
             anomalies.append({
                 'type':       'absent',
                 'label':      '今日未出勤',
@@ -8197,7 +8231,9 @@ def _compute_statements(year, month):
 
     cum_net_total     = cum_net_before + net_income
     cash_balance      = opening_cash + opening_equity + cum_net_total
-    total_equity      = opening_equity + cum_net_total
+    # 期初現金亦屬業主投入(權益),須計入權益側,資產負債表才會平衡
+    contributed_capital = opening_cash + opening_equity
+    total_equity      = contributed_capital + cum_net_total
 
     def cat_lines(section):
         return [{'name': k[1], 'amount': round(v, 2)}
@@ -8227,7 +8263,7 @@ def _compute_statements(year, month):
             'cash':                    round(cash_balance, 2),
             'total_assets':            round(cash_balance, 2),
             'total_liabilities':       0,
-            'opening_equity':          round(opening_equity, 2),
+            'opening_equity':          round(contributed_capital, 2),
             'retained_earnings':       round(cum_net_total, 2),
             'total_equity':            round(total_equity, 2),
             'total_liabilities_equity': round(total_equity, 2),
