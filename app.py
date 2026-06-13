@@ -301,10 +301,8 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate1 NUMERIC(4,2) DEFAULT 1.33",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate2 NUMERIC(4,2) DEFAULT 1.67",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate3 NUMERIC(4,2) DEFAULT 2.0",
-        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS document_id INT REFERENCES finance_documents(id) ON DELETE SET NULL",
-        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS start_time TEXT DEFAULT ''",
-        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS end_time TEXT DEFAULT ''",
-        "ALTER TABLE finance_documents ADD COLUMN IF NOT EXISTS image_data TEXT",
+        # leave_requests / finance_documents 的跨表欄位移至 _apply_late_migrations()
+        # (該些表於 init_db 之後才建立,放這裡冷啟動首次部署會被略過)
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_type TEXT DEFAULT 'monthly'",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS vacation_quota INT DEFAULT NULL",
@@ -333,7 +331,7 @@ def init_db():
         )""",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id) ON DELETE SET NULL",
         "ALTER TABLE punch_locations ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id) ON DELETE SET NULL",
-        "ALTER TABLE admin_accounts ADD COLUMN IF NOT EXISTS store_ids JSONB DEFAULT '[]'",
+        # admin_accounts.store_ids 移至 _apply_late_migrations()(其 CREATE 在本清單後段)
         "ALTER TABLE schedule_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
         """CREATE TABLE IF NOT EXISTS shift_staffing_requirements (
             id            SERIAL PRIMARY KEY,
@@ -359,14 +357,9 @@ def init_db():
         # punch_records: 最常被查詢的資料表,依 staff_id + punched_at 過濾
         "CREATE INDEX IF NOT EXISTS idx_pr_staff_at   ON punch_records(staff_id, punched_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_pr_at          ON punch_records(punched_at DESC)",
-        # leave_requests: 依員工 + 日期 + 狀態過濾
-        "CREATE INDEX IF NOT EXISTS idx_lr_staff_date  ON leave_requests(staff_id, start_date)",
-        "CREATE INDEX IF NOT EXISTS idx_lr_status      ON leave_requests(status)",
         # overtime_requests
         "CREATE INDEX IF NOT EXISTS idx_ot_staff_date  ON overtime_requests(staff_id, request_date)",
         "CREATE INDEX IF NOT EXISTS idx_ot_status      ON overtime_requests(status)",
-        # salary_records: 月份批次查詢
-        "CREATE INDEX IF NOT EXISTS idx_sr_month       ON salary_records(month)",
         # punch_staff: LINE bot 依 line_user_id 查詢
         "CREATE INDEX IF NOT EXISTS idx_ps_line_uid    ON punch_staff(line_user_id) WHERE line_user_id IS NOT NULL",
         # punch_requests
@@ -374,14 +367,10 @@ def init_db():
         # shift_assignments: 月份整表查詢用 shift_date;薪資/請假的每員工查詢用複合索引
         "CREATE INDEX IF NOT EXISTS idx_sa_date        ON shift_assignments(shift_date)",
         "CREATE INDEX IF NOT EXISTS idx_sa_staff_date  ON shift_assignments(staff_id, shift_date)",
-        # leave_requests: dashboard/異常偵測常以 status + 日期區間過濾(無 staff_id)
-        "CREATE INDEX IF NOT EXISTS idx_lr_status_date ON leave_requests(status, start_date)",
-        # finance_records
-        "CREATE INDEX IF NOT EXISTS idx_fr_date        ON finance_records(record_date)",
         # schedule_requests: 月份查詢
         "CREATE INDEX IF NOT EXISTS idx_schedr_month   ON schedule_requests(month)",
-        # leave_balances
-        "CREATE INDEX IF NOT EXISTS idx_lb_staff_year  ON leave_balances(staff_id, year)",
+        # 註:leave_requests / salary_records / finance_records / leave_balances 的索引
+        #    移至各自的 init_*_db(),因該些表在 init_db 之後才建立(冷啟動順序)。
     ]
     for sql in migrations:
         try:
@@ -939,6 +928,11 @@ def init_leave_db():
             updated_at  TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE(staff_id, leave_type_id, year)
         )""",
+        # 索引(表建立後)
+        "CREATE INDEX IF NOT EXISTS idx_lr_staff_date  ON leave_requests(staff_id, start_date)",
+        "CREATE INDEX IF NOT EXISTS idx_lr_status      ON leave_requests(status)",
+        "CREATE INDEX IF NOT EXISTS idx_lr_status_date ON leave_requests(status, start_date)",
+        "CREATE INDEX IF NOT EXISTS idx_lb_staff_year  ON leave_balances(staff_id, year)",
     ]
     for sql in migrations:
         try:
@@ -1041,7 +1035,6 @@ def init_salary_db():
         )""",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_ids JSONB DEFAULT NULL",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_overrides JSONB DEFAULT NULL",
-        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS income_tax_withheld NUMERIC(12,2) DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS salary_records (
             id              SERIAL PRIMARY KEY,
             staff_id        INT REFERENCES punch_staff(id) ON DELETE CASCADE,
@@ -1065,6 +1058,9 @@ def init_salary_db():
             updated_at      TIMESTAMPTZ   DEFAULT NOW(),
             UNIQUE(staff_id, month)
         )""",
+        # salary_records 建立後才能加欄位/索引(否則冷啟動首次部署會失敗)
+        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS income_tax_withheld NUMERIC(12,2) DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_sr_month       ON salary_records(month)",
     ]
     for sql in migrations:
         try:
@@ -1487,6 +1483,7 @@ def init_finance_db():
             UNIQUE(year, month, category_id)
         )""",
         "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS finance_synced BOOLEAN DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS idx_fr_date        ON finance_records(record_date)",
     ]
     for sql in migrations:
         try:
@@ -1862,6 +1859,28 @@ def _init_performance_db():
             print(f"[perf_init] {e}")
 
 _init_performance_db()
+
+
+def _apply_late_migrations():
+    """跨表欄位遷移:這些 ALTER 涉及在 init_db 之後才建立的表(或 FK 指向較晚
+    建立的表),必須在所有 init_*_db() 完成、全部表都存在後才執行,
+    否則全新資料庫首次部署時會被略過,導致欄位缺失。"""
+    migrations = [
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS start_time TEXT DEFAULT ''",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS end_time TEXT DEFAULT ''",
+        "ALTER TABLE finance_documents ADD COLUMN IF NOT EXISTS image_data TEXT",
+        # document_id 的 FK 指向 finance_documents,需兩表皆存在
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS document_id INT REFERENCES finance_documents(id) ON DELETE SET NULL",
+        "ALTER TABLE admin_accounts ADD COLUMN IF NOT EXISTS store_ids JSONB DEFAULT '[]'",
+    ]
+    for sql in migrations:
+        try:
+            with get_db() as conn:
+                conn.execute(sql)
+        except Exception as e:
+            print(f"[late_migration] {str(e)[:80]}")
+
+_apply_late_migrations()
 
 
 # ── 考核範本 CRUD ───────────────────────────────────────────────
