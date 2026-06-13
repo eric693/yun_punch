@@ -15,15 +15,11 @@ from flask import (
     Flask, request, jsonify, render_template,
     session, redirect, url_for, abort
 )
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage,
-    PostbackEvent, LocationMessage
-)
+from linebot import LineBotApi
+from linebot.models import TextSendMessage
 
 from config import (
-    SECRET_KEY, LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ADMIN_PASSWORD,
+    SECRET_KEY, ADMIN_PASSWORD,
     DATABASE_URL, RENDER_EXTERNAL_URL, TW_TZ, WEEKDAY_ZH,
 )
 from utils import (
@@ -68,8 +64,8 @@ def _set_cache_headers(resp):
 
 print(f"[startup] DATABASE_URL prefix: {DATABASE_URL[:20] if DATABASE_URL else 'NOT SET'}")
 
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler      = WebhookHandler(LINE_CHANNEL_SECRET)
+# LINE 推播一律用各設定自帶的 channel_access_token 即時建立 LineBotApi(...),
+# 故此處不再建立模組級 client(原 line_bot_api/handler 為未使用的死碼)。
 
 # ─── Imports ──────────────────────────────────────────────────────────────────
 import json as _json
