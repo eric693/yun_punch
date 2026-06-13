@@ -11,11 +11,6 @@ from functools import wraps
 
 import psycopg
 from psycopg.rows import dict_row
-try:
-    from psycopg_pool import ConnectionPool as _ConnectionPool
-    _pool_available = True
-except ImportError:
-    _pool_available = False
 from flask import (
     Flask, request, jsonify, render_template,
     session, redirect, url_for, abort
@@ -36,6 +31,7 @@ from utils import (
     _parse_tw_datetime, _calc_service_years, _eval_formula,
     _roc_date, _roc_year, _month_last_day, _b64url_encode, _b64url_decode,
 )
+from db import get_db, _init_pool
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -77,27 +73,7 @@ from datetime import date as _date_cls
 # 月份/時間區間、GPS、雜湊、公式等純工具函式已抽至 utils.py
 
 # ─── PostgreSQL ───────────────────────────────────────────────────────────────
-
-_pool = None
-
-def _init_pool():
-    global _pool
-    if _pool_available and DATABASE_URL:
-        try:
-            _pool = _ConnectionPool(
-                DATABASE_URL,
-                min_size=1,
-                max_size=10,
-                kwargs={'row_factory': dict_row},
-            )
-            print("[OK] Connection pool initialised")
-        except Exception as e:
-            print(f"[WARN] Pool init failed, falling back to direct connect: {e}")
-
-def get_db():
-    if _pool is not None:
-        return _pool.connection()
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+# 連線池與 get_db 已抽至 db.py
 
 def init_db():
     if not DATABASE_URL:
