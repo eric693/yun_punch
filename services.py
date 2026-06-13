@@ -831,3 +831,13 @@ def _score_to_grade(pct):
         if pct >= cfg['min_pct']:
             return cfg['grade']
     return _get_grade_config()[-1]['grade']
+
+
+# ── 財務設定(公司抬頭等,供 finance 與報表共用)──
+def _get_finance_settings():
+    try:
+        with get_db() as conn:
+            rows = conn.execute("SELECT setting_key, setting_value FROM finance_settings").fetchall()
+            return {r['setting_key']: r['setting_value'] for r in rows}
+    except:
+        return {}
