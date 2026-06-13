@@ -4122,83 +4122,10 @@ init_holiday_db()
 
 # ── Holiday CRUD API ─────────────────────────────────────────────
 
-@app.route('/api/holidays', methods=['GET'])
-@require_module('holiday')
-def api_holidays_list():
-    year = request.args.get('year', '')
-    conds, params = ['TRUE'], []
-    if year:
-        conds.append("EXTRACT(YEAR FROM date)=%s")
-        params.append(int(year))
-    with get_db() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM public_holidays WHERE {' AND '.join(conds)} ORDER BY date",
-            params
-        ).fetchall()
-    return jsonify([holiday_row(r) for r in rows])
 
-@app.route('/api/holidays/public', methods=['GET'])
-def api_holidays_public():
-    """Public endpoint for staff page"""
-    year = request.args.get('year', '')
-    month = request.args.get('month', '')
-    conds, params = ['TRUE'], []
-    if year:
-        conds.append("EXTRACT(YEAR FROM date)=%s"); params.append(int(year))
-    if month:
-        _d_s, _d_e = _month_date_range(month)
-        conds.append('date >= %s AND date < %s'); params.extend([_d_s, _d_e])
-    with get_db() as conn:
-        rows = conn.execute(
-            f"SELECT date, name FROM public_holidays WHERE {' AND '.join(conds)} ORDER BY date",
-            params
-        ).fetchall()
-    return jsonify({r['date'].isoformat(): r['name'] for r in rows})
 
-@app.route('/api/holidays', methods=['POST'])
-@require_module('holiday')
-def api_holiday_create():
-    b = request.get_json(force=True)
-    if not b.get('date') or not b.get('name','').strip():
-        return jsonify({'error': '請填寫日期和名稱'}), 400
-    with get_db() as conn:
-        row = conn.execute("""
-            INSERT INTO public_holidays (date, name, holiday_type, note)
-            VALUES (%s,%s,%s,%s)
-            ON CONFLICT (date) DO UPDATE
-              SET name=EXCLUDED.name, holiday_type=EXCLUDED.holiday_type, note=EXCLUDED.note
-            RETURNING *
-        """, (b['date'], b['name'].strip(),
-              b.get('holiday_type','national'), b.get('note',''))).fetchone()
-    return jsonify(holiday_row(row)), 201
 
-@app.route('/api/holidays/<int:hid>', methods=['DELETE'])
-@require_module('holiday')
-def api_holiday_delete(hid):
-    with get_db() as conn:
-        conn.execute("DELETE FROM public_holidays WHERE id=%s", (hid,))
-    return jsonify({'deleted': hid})
 
-@app.route('/api/holidays/batch', methods=['POST'])
-@require_module('holiday')
-def api_holiday_batch():
-    """Batch import holidays from JSON list"""
-    b    = request.get_json(force=True)
-    rows = b.get('holidays', [])
-    count = 0
-    with get_db() as conn:
-        for item in rows:
-            try:
-                conn.execute("""
-                    INSERT INTO public_holidays (date, name, holiday_type, note)
-                    VALUES (%s,%s,%s,%s)
-                    ON CONFLICT (date) DO UPDATE SET name=EXCLUDED.name
-                """, (item['date'], item['name'],
-                      item.get('holiday_type','national'), item.get('note','')))
-                count += 1
-            except Exception:
-                pass
-    return jsonify({'imported': count})
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -5295,107 +5222,17 @@ def api_edi_health_enroll():
 
 # ── 多店管理 ─────────────────────────────────────────────────────────────────
 
-@app.route('/api/stores', methods=['GET'])
-@login_required
-def api_stores_list():
-    with get_db() as conn:
-        rows = conn.execute("SELECT * FROM stores ORDER BY id").fetchall()
-    return jsonify([dict(r) for r in rows])
 
-@app.route('/api/stores', methods=['POST'])
-@login_required
-def api_stores_create():
-    b = request.get_json(force=True)
-    name = (b.get('name') or '').strip()
-    code = (b.get('code') or '').strip() or None
-    if not name: return jsonify({'error': '店名為必填'}), 400
-    with get_db() as conn:
-        row = conn.execute(
-            "INSERT INTO stores (name, code, address) VALUES (%s,%s,%s) RETURNING *",
-            (name, code, (b.get('address') or '').strip())
-        ).fetchone()
-    return jsonify(dict(row)), 201
 
-@app.route('/api/stores/<int:sid>', methods=['PUT'])
-@login_required
-def api_stores_update(sid):
-    b = request.get_json(force=True)
-    with get_db() as conn:
-        row = conn.execute("""
-            UPDATE stores SET name=%s, code=%s, address=%s, active=%s WHERE id=%s RETURNING *
-        """, ((b.get('name') or '').strip(), (b.get('code') or None),
-              (b.get('address') or '').strip(), bool(b.get('active', True)), sid)).fetchone()
-    return jsonify(dict(row)) if row else ('', 404)
 
-@app.route('/api/stores/<int:sid>', methods=['DELETE'])
-@login_required
-def api_stores_delete(sid):
-    with get_db() as conn:
-        conn.execute("UPDATE punch_staff     SET store_id=NULL WHERE store_id=%s", (sid,))
-        conn.execute("UPDATE punch_locations SET store_id=NULL WHERE store_id=%s", (sid,))
-        conn.execute("DELETE FROM stores WHERE id=%s", (sid,))
-    return jsonify({'deleted': sid})
 
-@app.route('/api/stores/<int:sid>/staff', methods=['GET'])
-@login_required
-def api_store_staff(sid):
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, name, role, active FROM punch_staff WHERE store_id=%s ORDER BY name", (sid,)
-        ).fetchall()
-    return jsonify([dict(r) for r in rows])
 
-@app.route('/api/staff/<int:sid>/store', methods=['PUT'])
-@login_required
-def api_staff_assign_store(sid):
-    b = request.get_json(force=True)
-    store_id = b.get('store_id')
-    with get_db() as conn:
-        conn.execute("UPDATE punch_staff SET store_id=%s WHERE id=%s", (store_id, sid))
-    return jsonify({'ok': True})
 
 
 # ── 排班需求 & 自動排班 ──────────────────────────────────────────────────────
 
-@app.route('/api/shifts/staffing-requirements', methods=['GET'])
-@login_required
-def api_staffing_req_get():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT r.id, r.shift_type_id, r.day_of_week, r.required_count,
-                   st.name as shift_name, st.color as shift_color
-            FROM shift_staffing_requirements r
-            JOIN shift_types st ON st.id=r.shift_type_id
-            ORDER BY st.sort_order, r.day_of_week
-        """).fetchall()
-    return jsonify([dict(r) for r in rows])
 
 
-@app.route('/api/shifts/staffing-requirements', methods=['PUT'])
-@login_required
-def api_staffing_req_put():
-    items = request.get_json(force=True)
-    if not isinstance(items, list):
-        return jsonify({'error': '格式錯誤'}), 400
-    count = 0
-    with get_db() as conn:
-        for it in items:
-            stid = int(it.get('shift_type_id', 0))
-            dow  = int(it.get('day_of_week', 0))
-            req  = max(0, int(it.get('required_count', 1)))
-            if req == 0:
-                conn.execute(
-                    "DELETE FROM shift_staffing_requirements WHERE shift_type_id=%s AND day_of_week=%s",
-                    (stid, dow))
-            else:
-                conn.execute("""
-                    INSERT INTO shift_staffing_requirements (shift_type_id, day_of_week, required_count, updated_at)
-                    VALUES (%s,%s,%s,NOW())
-                    ON CONFLICT (shift_type_id, day_of_week)
-                    DO UPDATE SET required_count=EXCLUDED.required_count, updated_at=NOW()
-                """, (stid, dow, req))
-            count += 1
-    return jsonify({'ok': True, 'upserted': count})
 
 
 @app.route('/api/schedule/auto-generate', methods=['POST'])
@@ -8704,6 +8541,10 @@ def _line_show_leave_types(staff, user_id):
 
 
 # ── Blueprints(模組化路由)──
+from blueprints.stores import bp as stores_bp
+app.register_blueprint(stores_bp)
+from blueprints.holidays import bp as holidays_bp
+app.register_blueprint(holidays_bp)
 from blueprints.expense import bp as expense_bp
 app.register_blueprint(expense_bp)
 from blueprints.performance import bp as performance_bp
