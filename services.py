@@ -793,3 +793,41 @@ def _broadcast_announcement_line(title, content):
                 print(f"[LINE broadcast] {s['line_user_id']}: {e}")
     except Exception as e:
         print(f"[LINE broadcast] error: {e}")
+
+
+# ── 績效評級 ──
+_DEFAULT_GRADE_CONFIG = [
+    {'grade': 'A', 'label': '優秀', 'min_pct': 90},
+    {'grade': 'B', 'label': '良好', 'min_pct': 75},
+    {'grade': 'C', 'label': '待加強', 'min_pct': 60},
+    {'grade': 'D', 'label': '需改善', 'min_pct':  0},
+]
+
+def _get_grade_config():
+    """從 DB 讀取評級設定,若未設定則回傳預設值(按門檻由高到低排序)."""
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM performance_config WHERE key='grade_config'"
+            ).fetchone()
+        if row:
+            cfg = row['value']
+            if isinstance(cfg, str):
+                cfg = _json.loads(cfg)
+            if isinstance(cfg, list) and cfg:
+                return sorted(cfg, key=lambda x: -float(x.get('min_pct', 0)))
+    except Exception:
+        pass
+    return _DEFAULT_GRADE_CONFIG
+
+def _grade_labels():
+    return {c['grade']: c['label'] for c in _get_grade_config()}
+
+
+
+
+def _score_to_grade(pct):
+    for cfg in _get_grade_config():
+        if pct >= cfg['min_pct']:
+            return cfg['grade']
+    return _get_grade_config()[-1]['grade']

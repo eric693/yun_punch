@@ -43,6 +43,7 @@ from services import (
     _trigger_salary_regen_for_leave, _calc_annual_leave_days,
     _calc_annual_leave_schedule, _calc_leave_days, _get_staff_scheduled_dates,
     _update_leave_balance, _calc_ot_pay, _is_holiday,
+    _get_grade_config, _grade_labels, _score_to_grade,
 )
 
 app = Flask(__name__)
@@ -6821,131 +6822,10 @@ TRAINING_CATEGORIES = {
     'other':        '其他',
 }
 
-@app.route('/api/training/records', methods=['GET'])
-@login_required
-def api_training_list():
-    staff_id  = request.args.get('staff_id')
-    category  = request.args.get('category', '')
-    expiring  = request.args.get('expiring')   # days, e.g. 60
-    expired   = request.args.get('expired')    # '1' = show only expired
 
-    sql = """
-        SELECT tr.*, ps.name AS staff_name, ps.department
-        FROM training_records tr
-        JOIN punch_staff ps ON tr.staff_id = ps.id
-        WHERE 1=1
-    """
-    params = []
-    if staff_id:
-        sql += " AND tr.staff_id = %s"; params.append(int(staff_id))
-    if category:
-        sql += " AND tr.category = %s"; params.append(category)
-    if expiring:
-        days = int(expiring)
-        sql += " AND tr.expiry_date IS NOT NULL AND tr.expiry_date <= CURRENT_DATE + INTERVAL '%s days' AND tr.expiry_date >= CURRENT_DATE"
-        params.append(days)
-    if expired == '1':
-        sql += " AND tr.expiry_date IS NOT NULL AND tr.expiry_date < CURRENT_DATE"
-    sql += " ORDER BY tr.expiry_date ASC NULLS LAST, tr.completed_date DESC"
 
-    with get_db() as conn:
-        rows = conn.execute(sql, params).fetchall()
-    result = []
-    for r in rows:
-        d = dict(r)
-        for k in ('completed_date', 'expiry_date', 'created_at', 'updated_at'):
-            if d.get(k): d[k] = str(d[k])
-        today = date.today()
-        if d.get('expiry_date'):
-            ed = _dt.strptime(d['expiry_date'], '%Y-%m-%d').date()
-            days_left = (ed - today).days
-            d['days_left'] = days_left
-            d['status'] = 'expired' if days_left < 0 else 'expiring_soon' if days_left <= 60 else 'valid'
-        else:
-            d['days_left'] = None
-            d['status'] = 'no_expiry'
-        result.append(d)
-    return jsonify(result)
 
-@app.route('/api/training/records', methods=['POST'])
-@login_required
-def api_training_create():
-    b = request.get_json(force=True) or {}
-    staff_id       = b.get('staff_id')
-    course_name    = (b.get('course_name') or '').strip()
-    category       = b.get('category', 'general')
-    completed_date = b.get('completed_date') or None
-    expiry_date    = b.get('expiry_date') or None
-    certificate_no = (b.get('certificate_no') or '').strip()
-    note           = (b.get('note') or '').strip()
-    if not staff_id or not course_name:
-        return jsonify({'error': '缺少必填欄位'}), 400
-    with get_db() as conn:
-        row = conn.execute("""
-            INSERT INTO training_records
-              (staff_id, course_name, category, completed_date, expiry_date, certificate_no, note)
-            VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id
-        """, (staff_id, course_name, category, completed_date, expiry_date, certificate_no, note)).fetchone()
-    return jsonify({'ok': True, 'id': row['id']})
 
-@app.route('/api/training/records/<int:rid>', methods=['PUT'])
-@login_required
-def api_training_update(rid):
-    b = request.get_json(force=True) or {}
-    with get_db() as conn:
-        conn.execute("""
-            UPDATE training_records SET
-              course_name=%s, category=%s, completed_date=%s, expiry_date=%s,
-              certificate_no=%s, note=%s, updated_at=NOW()
-            WHERE id=%s
-        """, (
-            b.get('course_name'), b.get('category', 'general'),
-            b.get('completed_date') or None, b.get('expiry_date') or None,
-            b.get('certificate_no', ''), b.get('note', ''), rid
-        ))
-    return jsonify({'ok': True})
-
-@app.route('/api/training/records/<int:rid>', methods=['DELETE'])
-@login_required
-def api_training_delete(rid):
-    with get_db() as conn:
-        conn.execute("DELETE FROM training_records WHERE id=%s", (rid,))
-    return jsonify({'ok': True})
-
-@app.route('/api/training/summary', methods=['GET'])
-@login_required
-def api_training_summary():
-    """每位員工的訓練狀況摘要"""
-    with get_db() as conn:
-        staff_all = conn.execute(
-            "SELECT id, name, department FROM punch_staff WHERE active=TRUE ORDER BY name"
-        ).fetchall()
-        records = conn.execute("""
-            SELECT staff_id, category, expiry_date,
-                   CASE
-                     WHEN expiry_date IS NULL THEN 'no_expiry'
-                     WHEN expiry_date < CURRENT_DATE THEN 'expired'
-                     WHEN expiry_date <= CURRENT_DATE + INTERVAL '60 days' THEN 'expiring_soon'
-                     ELSE 'valid'
-                   END AS status
-            FROM training_records
-        """).fetchall()
-    from collections import defaultdict
-    by_staff = defaultdict(list)
-    for r in records:
-        by_staff[r['staff_id']].append(dict(r))
-
-    result = []
-    for s in staff_all:
-        recs = by_staff[s['id']]
-        result.append({
-            'id': s['id'], 'name': s['name'], 'department': s['department'],
-            'total': len(recs),
-            'valid': sum(1 for r in recs if r['status'] in ('valid', 'no_expiry')),
-            'expiring_soon': sum(1 for r in recs if r['status'] == 'expiring_soon'),
-            'expired': sum(1 for r in recs if r['status'] == 'expired'),
-        })
-    return jsonify(result)
 
 # ── 薪資計算預覽 (Salary Preview without saving) ───────────────────────────────
 
@@ -8355,305 +8235,26 @@ def _init_performance_db():
 
 _init_performance_db()
 
-_DEFAULT_GRADE_CONFIG = [
-    {'grade': 'A', 'label': '優秀', 'min_pct': 90},
-    {'grade': 'B', 'label': '良好', 'min_pct': 75},
-    {'grade': 'C', 'label': '待加強', 'min_pct': 60},
-    {'grade': 'D', 'label': '需改善', 'min_pct':  0},
-]
-
-def _get_grade_config():
-    """從 DB 讀取評級設定,若未設定則回傳預設值(按門檻由高到低排序)."""
-    try:
-        with get_db() as conn:
-            row = conn.execute(
-                "SELECT value FROM performance_config WHERE key='grade_config'"
-            ).fetchone()
-        if row:
-            cfg = row['value']
-            if isinstance(cfg, str):
-                cfg = _json.loads(cfg)
-            if isinstance(cfg, list) and cfg:
-                return sorted(cfg, key=lambda x: -float(x.get('min_pct', 0)))
-    except Exception:
-        pass
-    return _DEFAULT_GRADE_CONFIG
-
-def _grade_labels():
-    return {c['grade']: c['label'] for c in _get_grade_config()}
-
-
-
-
-def _score_to_grade(pct):
-    for cfg in _get_grade_config():
-        if pct >= cfg['min_pct']:
-            return cfg['grade']
-    return _get_grade_config()[-1]['grade']
 
 # ── 考核範本 CRUD ───────────────────────────────────────────────
 
-@app.route('/api/performance/templates', methods=['GET'])
-@login_required
-def api_perf_templates_list():
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM performance_templates ORDER BY created_at DESC"
-        ).fetchall()
-    return jsonify([_perf_template_row(r) for r in rows])
 
-@app.route('/api/performance/templates', methods=['POST'])
-@login_required
-def api_perf_template_create():
-    b = request.get_json(force=True)
-    name = (b.get('name') or '').strip()
-    if not name: return jsonify({'error': '請填寫範本名稱'}), 400
-    items = b.get('items', [])
-    with get_db() as conn:
-        row = conn.execute("""
-            INSERT INTO performance_templates (name, description, period, items)
-            VALUES (%s,%s,%s,%s) RETURNING *
-        """, (name, b.get('description',''), b.get('period','quarterly'),
-              _json.dumps(items))).fetchone()
-    return jsonify(_perf_template_row(row)), 201
 
-@app.route('/api/performance/templates/<int:tid>', methods=['PUT'])
-@login_required
-def api_perf_template_update(tid):
-    b = request.get_json(force=True)
-    with get_db() as conn:
-        row = conn.execute("""
-            UPDATE performance_templates
-            SET name=%s, description=%s, period=%s, items=%s, active=%s
-            WHERE id=%s RETURNING *
-        """, (b.get('name','').strip(), b.get('description',''),
-              b.get('period','quarterly'), _json.dumps(b.get('items',[])),
-              bool(b.get('active', True)), tid)).fetchone()
-    return jsonify(_perf_template_row(row)) if row else ('', 404)
 
-@app.route('/api/performance/templates/<int:tid>', methods=['DELETE'])
-@login_required
-def api_perf_template_delete(tid):
-    with get_db() as conn:
-        conn.execute("DELETE FROM performance_templates WHERE id=%s", (tid,))
-    return jsonify({'deleted': tid})
 
 # ── 考核記錄 CRUD ───────────────────────────────────────────────
 
-@app.route('/api/performance/reviews', methods=['GET'])
-@login_required
-def api_perf_reviews_list():
-    staff_id = request.args.get('staff_id')
-    period   = request.args.get('period')
-    conds, params = ['TRUE'], []
-    if staff_id: conds.append("pr.staff_id=%s"); params.append(int(staff_id))
-    if period:   conds.append("pr.period_label ILIKE %s"); params.append(f'%{period}%')
-    with get_db() as conn:
-        rows = conn.execute(f"""
-            SELECT pr.*,
-                   ps.name  AS staff_name,  ps.role   AS staff_role,
-                   pt.name  AS tpl_name
-            FROM performance_reviews pr
-            JOIN punch_staff         ps ON ps.id = pr.staff_id
-            LEFT JOIN performance_templates pt ON pt.id = pr.template_id
-            WHERE {' AND '.join(conds)}
-            ORDER BY pr.reviewed_at DESC
-        """, params).fetchall()
-    result = []
-    for r in rows:
-        d = _perf_review_row(r)
-        d['staff_name']   = r['staff_name']
-        d['staff_role']   = r['staff_role']
-        d['template_name'] = r['tpl_name'] or ''
-        result.append(d)
-    return jsonify(result)
 
-@app.route('/api/performance/reviews', methods=['POST'])
-@login_required
-def api_perf_review_create():
-    b           = request.get_json(force=True)
-    staff_id    = b.get('staff_id')
-    template_id = b.get('template_id')
-    period_label= (b.get('period_label') or '').strip()
-    scores      = b.get('scores', {})
-    comments    = (b.get('comments') or '').strip()
-    reviewer    = (b.get('reviewer') or '').strip() or session.get('admin_display_name', '管理員')
 
-    if not staff_id or not period_label:
-        return jsonify({'error': '請選擇員工及考核期間'}), 400
 
-    # Calculate total & grade from template items
-    total = 0.0; max_s = 100.0
-    if template_id:
-        with get_db() as conn:
-            tpl = conn.execute(
-                "SELECT items FROM performance_templates WHERE id=%s", (template_id,)
-            ).fetchone()
-        if tpl:
-            items = tpl.get('items') or []
-            if isinstance(items, str):
-                try: items = _json.loads(items)
-                except: items = []
-            if items:
-                max_s = sum(float(it.get('max_score', 10)) for it in items)
-                total = sum(
-                    float(scores.get(str(it.get('id', it.get('name',''))), 0))
-                    for it in items
-                )
-    else:
-        total = float(b.get('total_score', 0))
-        max_s = float(b.get('max_score', 100))
-
-    pct   = (total / max_s * 100) if max_s > 0 else 0
-    grade = _score_to_grade(pct)
-
-    with get_db() as conn:
-        row = conn.execute("""
-            INSERT INTO performance_reviews
-              (staff_id, template_id, period_label, scores, total_score,
-               max_score, grade, comments, reviewer, reviewed_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()) RETURNING *
-        """, (staff_id, template_id or None, period_label,
-              _json.dumps(scores), round(total, 2), round(max_s, 2),
-              grade, comments, reviewer)).fetchone()
-        staff = conn.execute(
-            "SELECT name FROM punch_staff WHERE id=%s", (staff_id,)
-        ).fetchone()
-
-    # LINE 通知
-    grade_labels = _grade_labels()
-    msg = (f"[績效考核] {period_label} 考核結果\n"
-           f"總分:{total:.1f} / {max_s:.0f}({pct:.0f}%)\n"
-           f"評級:{grade} {grade_labels.get(grade,'')}\n"
-           f"考核人:{reviewer}\n"
-           + (f"備注:{comments[:60]}\n" if comments else '')
-           + "請至員工系統查看詳情.")
-    _notify_staff_line(staff_id, msg)
-
-    d = _perf_review_row(row)
-    d['staff_name'] = staff['name'] if staff else ''
-    return jsonify(d), 201
-
-@app.route('/api/performance/reviews/<int:rid>', methods=['PUT'])
-@login_required
-def api_perf_review_update(rid):
-    b        = request.get_json(force=True)
-    scores   = b.get('scores', {})
-    comments = (b.get('comments') or '').strip()
-    with get_db() as conn:
-        rev = conn.execute(
-            "SELECT * FROM performance_reviews WHERE id=%s", (rid,)
-        ).fetchone()
-        if not rev: return ('', 404)
-        # Recalculate score
-        total = float(b.get('total_score', rev['total_score']))
-        max_s = float(b.get('max_score',   rev['max_score']))
-        pct   = (total / max_s * 100) if max_s > 0 else 0
-        grade = _score_to_grade(pct)
-        row = conn.execute("""
-            UPDATE performance_reviews
-            SET scores=%s, total_score=%s, max_score=%s, grade=%s,
-                comments=%s, reviewed_at=NOW()
-            WHERE id=%s RETURNING *
-        """, (_json.dumps(scores), round(total,2), round(max_s,2),
-              grade, comments, rid)).fetchone()
-    return jsonify(_perf_review_row(row)) if row else ('', 404)
-
-@app.route('/api/performance/reviews/<int:rid>/adjust-salary', methods=['POST'])
-@login_required
-def api_perf_adjust_salary(rid):
-    """依考核結果調薪 - 直接更新員工底薪並記錄"""
-    b     = request.get_json(force=True)
-    delta = float(b.get('salary_delta', b.get('delta', 0)))
-    note  = (b.get('note') or '').strip()
-    if delta == 0: return jsonify({'error': '調薪金額不可為 0'}), 400
-    with get_db() as conn:
-        rev = conn.execute(
-            "SELECT * FROM performance_reviews WHERE id=%s", (rid,)
-        ).fetchone()
-        if not rev: return ('', 404)
-        staff = conn.execute(
-            "SELECT id, name, base_salary FROM punch_staff WHERE id=%s", (rev['staff_id'],)
-        ).fetchone()
-        if not staff: return ('', 404)
-        new_salary = float(staff['base_salary'] or 0) + delta
-        conn.execute(
-            "UPDATE punch_staff SET base_salary=%s, insured_salary=%s WHERE id=%s",
-            (new_salary, new_salary, staff['id'])
-        )
-        conn.execute("""
-            UPDATE performance_reviews
-            SET salary_adjusted=TRUE, salary_delta=%s
-            WHERE id=%s
-        """, (delta, rid))
-
-    direction = '調升' if delta > 0 else '調降'
-    msg = (f"[薪資調整] 績效考核連動\n"
-           f"考核期:{rev['period_label']}　評級:{rev['grade']}\n"
-           f"{direction} NT$ {abs(delta):,.0f}\n"
-           f"新底薪:NT$ {new_salary:,.0f}\n"
-           + (f"說明:{note}" if note else ''))
-    _notify_staff_line(staff['id'], msg)
-
-    return jsonify({'ok': True, 'new_salary': new_salary, 'delta': delta})
 
 # ── 員工查自己的考核 ────────────────────────────────────────────
 
-@app.route('/api/performance/my-reviews', methods=['GET'])
-def api_perf_my_reviews():
-    sid = session.get('punch_staff_id')
-    if not sid: return jsonify({'error': 'not logged in'}), 401
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT pr.*, pt.name AS tpl_name
-            FROM performance_reviews pr
-            LEFT JOIN performance_templates pt ON pt.id=pr.template_id
-            WHERE pr.staff_id=%s
-            ORDER BY pr.reviewed_at DESC LIMIT 10
-        """, (sid,)).fetchall()
-    result = []
-    for r in rows:
-        d = _perf_review_row(r)
-        d['template_name'] = r['tpl_name'] or ''
-        result.append(d)
-    return jsonify(result)
 
 
 # ── 評級設定 CRUD ───────────────────────────────────────────────
 
-@app.route('/api/performance/config', methods=['GET'])
-@login_required
-def api_perf_config_get():
-    return jsonify({'grades': _get_grade_config()})
 
-@app.route('/api/performance/config', methods=['PUT'])
-@login_required
-def api_perf_config_update():
-    b      = request.get_json(force=True)
-    grades = b.get('grades', [])
-    if not grades:
-        return jsonify({'error': '請至少設定一個評級'}), 400
-    for g in grades:
-        if not str(g.get('grade', '')).strip() or not str(g.get('label', '')).strip():
-            return jsonify({'error': '評級代碼與標籤不可為空'}), 400
-        pct = g.get('min_pct')
-        if pct is None or not (0 <= float(pct) <= 100):
-            return jsonify({'error': '門檻百分比需介於 0~100'}), 400
-    # 確保至少有一個門檻為 0,避免無法分級
-    if not any(float(g.get('min_pct', -1)) == 0 for g in grades):
-        return jsonify({'error': '必須有一個評級的門檻設為 0%(作為最低等級)'}), 400
-    grades_sorted = sorted(
-        [{'grade': str(g['grade']).strip(), 'label': str(g['label']).strip(),
-          'min_pct': float(g['min_pct'])} for g in grades],
-        key=lambda x: -x['min_pct']
-    )
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO performance_config (key, value, updated_at)
-            VALUES ('grade_config', %s, NOW())
-            ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
-        """, (_json.dumps(grades_sorted),))
-    return jsonify({'ok': True, 'grades': grades_sorted})
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -9280,6 +8881,10 @@ def _line_show_leave_types(staff, user_id):
 
 
 # ── Blueprints(模組化路由)──
+from blueprints.performance import bp as performance_bp
+app.register_blueprint(performance_bp)
+from blueprints.training import bp as training_bp
+app.register_blueprint(training_bp)
 from blueprints.mobile import bp as mobile_bp
 app.register_blueprint(mobile_bp)
 from blueprints.webauthn import bp as webauthn_bp
