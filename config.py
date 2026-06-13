@@ -26,6 +26,9 @@ DATABASE_URL = (
 # 用於 keep-alive ping 自身的對外網址
 RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL', '')
 
+# Anthropic API(收據/憑證 OCR)
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+
 # 時區與常數
 TW_TZ = _tz(_td(hours=8))   # Asia/Taipei (UTC+8)
 WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
