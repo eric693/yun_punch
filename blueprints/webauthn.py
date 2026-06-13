@@ -1,8 +1,6 @@
 """WebAuthn(Face ID / 指紋)網頁生物辨識登入 blueprint。"""
 import os
-import hashlib
 import secrets
-import json as _json
 
 from flask import Blueprint, request, jsonify, session
 
