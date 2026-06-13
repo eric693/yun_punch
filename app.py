@@ -39,6 +39,7 @@ from serializers import (
     holiday_row, _finance_cat_row, _finance_rec_row, _recurring_row, _bank_row,
     _payable_row, _expense_row, _perf_template_row, _perf_review_row,
 )
+from auth import login_required, require_module, require_super
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -583,43 +584,7 @@ def health():
 
 # ─── Admin Auth ───────────────────────────────────────────────────────────────
 
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get('logged_in'):
-            if request.is_json or request.path.startswith('/api/'):
-                return jsonify({'error': '請先登入'}), 401
-            return redirect(url_for('admin_login'))
-        return f(*args, **kwargs)
-    return decorated
-
-def require_module(module):
-    """確認已登入且擁有指定模組權限(超級管理員跳過模組檢查)."""
-    def decorator(f):
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            if not session.get('logged_in'):
-                if request.is_json or request.path.startswith('/api/'):
-                    return jsonify({'error': '請先登入'}), 401
-                return redirect(url_for('admin_login'))
-            if not session.get('admin_is_super'):
-                perms = session.get('admin_permissions') or []
-                if module not in perms:
-                    return jsonify({'error': f'無「{module}」模組的存取權限'}), 403
-            return f(*args, **kwargs)
-        return decorated
-    return decorator
-
-def require_super(f):
-    """只允許超級管理員存取."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get('logged_in'):
-            return jsonify({'error': '請先登入'}), 401
-        if not session.get('admin_is_super'):
-            return jsonify({'error': '需要超級管理員權限'}), 403
-        return f(*args, **kwargs)
-    return decorated
+# login_required / require_module / require_super 已抽至 auth.py
 
 @app.route('/')
 def index():
